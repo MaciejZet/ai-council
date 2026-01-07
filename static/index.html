@@ -160,16 +160,21 @@
                     </div>
                 </div>
                 <!-- Mode Toggle -->
-                <div class="flex items-center gap-2 mr-auto ml-6">
-                    <button id="mode-council" onclick="toggleDebateMode()"
+                <div class="flex items-center gap-1 mr-auto ml-6 bg-white/5 rounded-lg p-1">
+                    <button id="mode-council" onclick="setMode('council')"
                         class="mode-btn active flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-all">
                         <span>🏛️</span>
                         <span class="hidden sm:inline">Narada</span>
                     </button>
-                    <button id="mode-debate" onclick="toggleDebateMode()"
+                    <button id="mode-debate" onclick="setMode('debate')"
                         class="mode-btn flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-all">
                         <span>⚔️</span>
                         <span class="hidden sm:inline">Debata</span>
+                    </button>
+                    <button id="mode-mentors" onclick="setMode('mentors')"
+                        class="mode-btn flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-all">
+                        <span>🌟</span>
+                        <span class="hidden sm:inline">Ikony</span>
                     </button>
                 </div>
                 <div class="flex items-center gap-3">

@@ -219,7 +219,8 @@ async def get_providers():
         "models": {
             "openai": ["gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-5-nano", "gpt-5-mini", "gpt-5", "o1-mini"],
             "grok": ["grok-2", "grok-beta"],
-            "gemini": ["gemini-2.0-flash-exp", "gemini-1.5-pro", "gemini-1.5-flash"]
+            "gemini": ["gemini-2.5-pro-preview", "gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-1.5-pro"],
+            "deepseek": ["deepseek-chat", "deepseek-reasoner"]
         }
     }
 
@@ -490,6 +491,106 @@ async def debate_stream(
     
     return StreamingResponse(
         orchestrator.run_debate_stream(query, max_rounds=max_rounds, llm=llm),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
+
+
+# ========== HISTORICAL COUNCIL API ==========
+from src.agents.historical_agents import (
+    HISTORICAL_GROUPS, 
+    HISTORICAL_AGENTS_INFO, 
+    list_available_historical_agents
+)
+from src.council.historical_council import HistoricalCouncil
+
+
+@app.get("/api/historical/agents")
+async def get_historical_agents():
+    """Get available historical figures grouped by category"""
+    agents = list_available_historical_agents()
+    
+    # Group by category
+    grouped = {}
+    for aid, info in agents.items():
+        group = info["group"]
+        if group not in grouped:
+            grouped[group] = {
+                "name": info["group_name"],
+                "emoji": info["group_emoji"],
+                "agents": []
+            }
+        grouped[group]["agents"].append({
+            "id": aid,
+            "name": info["name"],
+            "emoji": info["emoji"],
+            "role": info["role"],
+            "personality": info["personality"]
+        })
+    
+    return {
+        "groups": HISTORICAL_GROUPS,
+        "agents_by_group": grouped,
+        "total_agents": len(agents)
+    }
+
+
+class HistoricalDeliberateRequest(BaseModel):
+    query: str
+    agent_ids: List[str] = []  # Empty = all agents
+    provider: str = "openai"
+    model: str = "gpt-4o"
+    mode: str = "deliberate"  # "deliberate" or "debate"
+
+
+@app.get("/api/historical/deliberate/stream")
+async def historical_deliberate_stream(
+    query: str,
+    agent_ids: str = "",  # comma-separated
+    provider: str = "openai",
+    model: str = "gpt-4o",
+    mode: str = "deliberate"
+):
+    """
+    Stream Historical Council deliberation (Rada Mędrców).
+    
+    Args:
+        query: User question
+        agent_ids: Comma-separated agent IDs (e.g. "aristotle,buffett,musk")
+        provider: LLM provider
+        model: Model name
+        mode: "deliberate" (simple) or "debate" (multi-round reactions)
+    """
+    
+    # Parse agent IDs
+    ids = [a.strip() for a in agent_ids.split(",") if a.strip()] if agent_ids else None
+    
+    # Create LLM provider
+    from src.llm_providers import DeepSeekProvider
+    if provider == "openai":
+        llm = OpenAIProvider(model=model)
+    elif provider == "grok":
+        llm = GrokProvider(model=model)
+    elif provider == "deepseek":
+        llm = DeepSeekProvider(model=model)
+    else:
+        llm = GeminiProvider(model=model)
+    
+    # Create Historical Council
+    council = HistoricalCouncil(use_knowledge_base=True)
+    
+    # Choose mode
+    if mode == "debate":
+        stream = council.debate_stream(query, agent_ids=ids, llm=llm)
+    else:
+        stream = council.deliberate_stream(query, agent_ids=ids, llm=llm)
+    
+    return StreamingResponse(
+        stream,
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

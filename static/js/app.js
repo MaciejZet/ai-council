@@ -462,8 +462,10 @@ async function handleSubmit(e) {
     queryText.textContent = query;
     queryDisplay.classList.remove('hidden');
 
-    // Choose mode: Debate or Council
-    if (debateMode) {
+    // Choose mode: Council, Debate, or Mentors
+    if (currentMode === 'mentors') {
+        mentorsStream(query);
+    } else if (currentMode === 'debate') {
         debateStream(query);
     } else {
         deliberateStream(query);
@@ -473,6 +475,162 @@ async function handleSubmit(e) {
     attachmentText = '';
     fileIndicator.classList.add('hidden');
     autoResize();
+}
+
+// ========== MENTORS (ICONS) MODE ==========
+function mentorsStream(query) {
+    const agentIds = selectedMentors.length > 0 ? selectedMentors.join(',') : '';
+
+    const params = new URLSearchParams({
+        query: query,
+        agent_ids: agentIds,
+        provider: currentProvider,
+        model: currentModel,
+        mode: 'deliberate'  // or 'debate' for multi-round
+    });
+
+    // Reset streaming state
+    streamingAgentResponses = {};
+    showStreamingUI();
+
+    streamingEventSource = new EventSource(`/api/historical/deliberate/stream?${params}`);
+
+    streamingEventSource.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+
+        switch (data.event) {
+            case 'sources':
+                handleSources(data.sources);
+                break;
+
+            case 'council_start':
+            case 'debate_start':
+                // Show which mentors are participating
+                if (data.agents && data.agents.length > 0) {
+                    const names = data.agents.map(a => `${a.emoji} ${a.name}`).join(', ');
+                    showToast(`Rada: ${names}`, 'info');
+                }
+                break;
+
+            case 'round_start':
+                handleRoundStart(data.round, data.type, data.title);
+                break;
+
+            case 'agent_start':
+                handleMentorStart(data.agent, data.emoji, data.role, data.round);
+                break;
+
+            case 'delta':
+                handleDelta(data.agent, data.content);
+                break;
+
+            case 'agent_done':
+                handleAgentDone(data.agent);
+                break;
+
+            case 'round_done':
+                // Round completed
+                break;
+
+            case 'complete':
+                handleMentorsComplete(data.total_agents);
+                streamingEventSource.close();
+                streamingEventSource = null;
+                break;
+
+            case 'error':
+                showToast('Błąd: ' + data.message, 'error');
+                streamingEventSource.close();
+                streamingEventSource = null;
+                showWelcome();
+                break;
+        }
+    };
+
+    streamingEventSource.onerror = (error) => {
+        console.error('Mentors SSE Error:', error);
+        streamingEventSource.close();
+        streamingEventSource = null;
+        showToast('Połączenie przerwane', 'error');
+    };
+}
+
+function handleMentorStart(agentName, emoji, role, round) {
+    // Similar to handleAgentStart but with mentor-specific styling
+    const placeholder = tabContents.querySelector('.streaming-placeholder');
+    if (placeholder) placeholder.remove();
+
+    streamingAgentResponses[agentName] = { emoji: emoji || '🌟', role: role || 'Mentor', content: '' };
+
+    // Mentor colors based on name
+    const colors = { bg: 'bg-amber-500/10', text: 'text-amber-500', icon: 'auto_awesome' };
+
+    // Add tab button
+    const tabBtn = document.createElement('button');
+    tabBtn.className = 'tab-button flex items-center gap-2 px-4 py-2 rounded-t-lg text-sm font-medium transition-colors active';
+    tabBtn.dataset.tab = agentName;
+    tabBtn.innerHTML = `
+        <span class="text-lg">${emoji || '🌟'}</span>
+        <span>${agentName}</span>
+        <span class="typing-indicator ml-1"></span>
+    `;
+    tabBtn.onclick = () => switchTab(agentName);
+
+    // Deactivate other tabs
+    agentTabs.querySelectorAll('.tab-button').forEach(btn => btn.classList.remove('active'));
+    agentTabs.appendChild(tabBtn);
+
+    // Add content area
+    const contentDiv = document.createElement('div');
+    contentDiv.className = 'tab-content active';
+    contentDiv.id = `tab-${agentName}`;
+    contentDiv.innerHTML = `
+        <div class="agent-card">
+            <div class="agent-card-header">
+                <div class="w-10 h-10 rounded-full ${colors.bg} flex items-center justify-center text-2xl">
+                    ${emoji || '🌟'}
+                </div>
+                <div>
+                    <h3 class="font-bold text-sm text-white">${emoji || '🌟'} ${agentName}</h3>
+                    <p class="text-[10px] text-text-secondary uppercase tracking-wide">${role || 'Mentor'}</p>
+                </div>
+                <span class="ml-auto text-xs font-mono text-amber-500 bg-amber-500/10 px-2 py-0.5 rounded streaming-badge">
+                    <span class="animate-pulse">●</span> Streaming
+                </span>
+            </div>
+            <div class="agent-content font-body streaming-content" id="content-${agentName}"><span class="typing-cursor"></span></div>
+        </div>
+    `;
+
+    tabContents.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+    tabContents.appendChild(contentDiv);
+}
+
+function handleMentorsComplete(totalAgents) {
+    const agentResponses = Object.entries(streamingAgentResponses).map(([name, data]) => ({
+        agent_name: `${data.emoji} ${name}`,
+        role: data.role,
+        content: data.content,
+        provider_used: `${currentProvider} (${currentModel})`
+    }));
+
+    const synthesis = streamingAgentResponses['Rada Mędrców'] ? {
+        agent_name: '🔮 Rada Mędrców',
+        role: 'Syntezator',
+        content: streamingAgentResponses['Rada Mędrców'].content,
+        provider_used: `${currentProvider} (${currentModel})`
+    } : null;
+
+    lastResult = {
+        query: queryText.textContent,
+        timestamp: new Date().toISOString(),
+        agent_responses: agentResponses.filter(r => !r.agent_name.includes('Rada Mędrców')),
+        synthesis: synthesis,
+        sources: []
+    };
+
+    saveCurrentSession(queryText.textContent);
+    showToast('Rada Mędrców zakończyła naradę', 'success');
 }
 
 function deliberateStream(query) {
@@ -966,23 +1124,132 @@ function handleDebateComplete(totalRounds, totalAgents) {
 }
 
 function toggleDebateMode() {
-    debateMode = !debateMode;
+    // Legacy - redirect to setMode
+    setMode(debateMode ? 'council' : 'debate');
+}
+
+let currentMode = 'council'; // 'council', 'debate', 'mentors'
+let selectedMentors = []; // Selected mentor IDs for mentors mode
+
+function setMode(mode) {
+    currentMode = mode;
+    debateMode = (mode === 'debate');
 
     const councilBtn = document.getElementById('mode-council');
     const debateBtn = document.getElementById('mode-debate');
+    const mentorsBtn = document.getElementById('mode-mentors');
 
-    if (councilBtn && debateBtn) {
-        councilBtn.classList.toggle('active', !debateMode);
-        debateBtn.classList.toggle('active', debateMode);
-    }
+    // Update button states
+    [councilBtn, debateBtn, mentorsBtn].forEach(btn => {
+        if (btn) btn.classList.remove('active');
+    });
+
+    if (mode === 'council' && councilBtn) councilBtn.classList.add('active');
+    if (mode === 'debate' && debateBtn) debateBtn.classList.add('active');
+    if (mode === 'mentors' && mentorsBtn) mentorsBtn.classList.add('active');
 
     // Update header text
-    const headerTitle = document.querySelector('#page-dashboard header h2');
-    if (headerTitle) {
-        headerTitle.textContent = debateMode ? '⚔️ Debata Rady AI' : '🏛️ Narada Rady AI';
+    const headerTitle = document.getElementById('main-title');
+    const titles = {
+        'council': '🏛️ Narada Rady AI',
+        'debate': '⚔️ Debata Rady AI',
+        'mentors': '🌟 Ikony & Mentorzy'
+    };
+    if (headerTitle) headerTitle.textContent = titles[mode] || titles.council;
+
+    // Show mentor selector for mentors mode
+    if (mode === 'mentors') {
+        loadMentorsSelector();
+    } else {
+        hideMentorsSelector();
     }
 
-    showToast(debateMode ? 'Tryb debaty włączony' : 'Tryb narady włączony', 'info');
+    const toastMsgs = {
+        'council': 'Tryb narady',
+        'debate': 'Tryb debaty',
+        'mentors': 'Tryb: Ikony & Mentorzy'
+    };
+    showToast(toastMsgs[mode] || 'Tryb zmieniony', 'info');
+}
+
+async function loadMentorsSelector() {
+    // Create or show mentors panel
+    let panel = document.getElementById('mentors-panel');
+    if (!panel) {
+        panel = document.createElement('div');
+        panel.id = 'mentors-panel';
+        panel.className = 'p-4 bg-surface-dark/50 border-b border-white/10';
+
+        // Insert after header
+        const header = document.querySelector('#page-dashboard header');
+        if (header) header.after(panel);
+    }
+    panel.classList.remove('hidden');
+    panel.innerHTML = '<div class="text-center py-2 text-text-secondary">Ładowanie postaci...</div>';
+
+    try {
+        const response = await fetch('/api/historical/agents');
+        const data = await response.json();
+
+        let html = '<div class="max-w-4xl mx-auto">';
+        html += '<p class="text-sm text-text-secondary mb-3">Wybierz postacie do narady:</p>';
+        html += '<div class="flex flex-wrap gap-2">';
+
+        for (const [groupId, groupData] of Object.entries(data.agents_by_group)) {
+            for (const agent of groupData.agents) {
+                const isSelected = selectedMentors.includes(agent.id);
+                html += `
+                    <button onclick="toggleMentor('${agent.id}')" 
+                        class="mentor-btn flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm transition-all border ${isSelected ? 'bg-primary text-white border-primary' : 'bg-white/5 text-text-secondary border-white/10 hover:border-primary/50'}"
+                        data-mentor-id="${agent.id}">
+                        <span>${agent.emoji}</span>
+                        <span>${agent.name}</span>
+                    </button>
+                `;
+            }
+        }
+
+        html += '</div>';
+        html += `<p class="text-xs text-text-secondary mt-2">${selectedMentors.length > 0 ? selectedMentors.length + ' wybrano' : 'Brak = wszyscy'}</p>`;
+        html += '</div>';
+
+        panel.innerHTML = html;
+    } catch (err) {
+        panel.innerHTML = '<p class="text-red-400 text-center py-2">Błąd ładowania postaci</p>';
+    }
+}
+
+function hideMentorsSelector() {
+    const panel = document.getElementById('mentors-panel');
+    if (panel) panel.classList.add('hidden');
+}
+
+function toggleMentor(mentorId) {
+    const idx = selectedMentors.indexOf(mentorId);
+    if (idx > -1) {
+        selectedMentors.splice(idx, 1);
+    } else {
+        selectedMentors.push(mentorId);
+    }
+
+    // Update UI
+    const btn = document.querySelector(`[data-mentor-id="${mentorId}"]`);
+    if (btn) {
+        const isSelected = selectedMentors.includes(mentorId);
+        btn.classList.toggle('bg-primary', isSelected);
+        btn.classList.toggle('text-white', isSelected);
+        btn.classList.toggle('border-primary', isSelected);
+        btn.classList.toggle('bg-white/5', !isSelected);
+        btn.classList.toggle('text-text-secondary', !isSelected);
+        btn.classList.toggle('border-white/10', !isSelected);
+    }
+
+    // Update count
+    const panel = document.getElementById('mentors-panel');
+    if (panel) {
+        const countEl = panel.querySelector('p.text-xs');
+        if (countEl) countEl.textContent = selectedMentors.length > 0 ? selectedMentors.length + ' wybrano' : 'Brak = wszyscy';
+    }
 }
 
 // ========== UI STATE ==========

@@ -14,11 +14,11 @@ echo -e "${GREEN}🏛️ AI Council - Uruchamianie...${NC}"
 if [ ! -d "venv" ]; then
     echo -e "${YELLOW}⚠️ Tworzenie środowiska wirtualnego...${NC}"
     python3 -m venv venv
-    source venv/bin/activate
-    pip install -r requirements.txt
-else
-    source venv/bin/activate
+    ./venv/bin/pip install -r requirements.txt
 fi
+
+# Aktywuj venv
+source venv/bin/activate
 
 # Sprawdź .env
 if [ ! -f ".env" ]; then
@@ -28,9 +28,10 @@ if [ ! -f ".env" ]; then
     exit 1
 fi
 
-# Install FastAPI deps if needed
-pip install fastapi uvicorn python-multipart --quiet
+# Install FastAPI deps if needed (using venv pip)
+./venv/bin/pip install fastapi uvicorn python-multipart --quiet 2>/dev/null
 
 # Uruchom FastAPI (nowy frontend)
 echo -e "${GREEN}🚀 Uruchamianie aplikacji na http://localhost:8501${NC}"
-uvicorn main:app --reload --host 0.0.0.0 --port 8501
+./venv/bin/uvicorn main:app --reload --host 0.0.0.0 --port 8501
+

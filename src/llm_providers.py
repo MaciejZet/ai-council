@@ -49,6 +49,9 @@ TOKEN_COSTS = {
     "gemini-2.0-flash-exp": {"input": 0.00, "output": 0.00},  # Free tier
     "gemini-1.5-pro": {"input": 0.00125, "output": 0.005},
     "gemini-1.5-flash": {"input": 0.000075, "output": 0.0003},
+    # DeepSeek
+    "deepseek-chat": {"input": 0.00027, "output": 0.0011},      # DeepSeek V3
+    "deepseek-reasoner": {"input": 0.00055, "output": 0.00219}, # DeepSeek R1
 }
 
 
@@ -245,6 +248,61 @@ class GeminiProvider(LLMProvider):
                 yield chunk.text
 
 
+class DeepSeekProvider(LLMProvider):
+    """Provider dla DeepSeek (OpenAI-compatible API)"""
+    
+    def __init__(self, model: str = "deepseek-chat"):
+        from openai import AsyncOpenAI
+        self.client = AsyncOpenAI(
+            api_key=os.getenv("DEEPSEEK_API_KEY"),
+            base_url="https://api.deepseek.com"
+        )
+        self.model = model
+    
+    async def generate(self, system_prompt: str, user_prompt: str, temperature: float = 0.7) -> LLMResponse:
+        response = await self.client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            temperature=temperature
+        )
+        
+        usage = response.usage
+        return LLMResponse(
+            content=response.choices[0].message.content,
+            prompt_tokens=usage.prompt_tokens if usage else 0,
+            completion_tokens=usage.completion_tokens if usage else 0,
+            total_tokens=usage.total_tokens if usage else 0,
+            model=self.model
+        )
+    
+    def get_name(self) -> str:
+        return f"DeepSeek ({self.model})"
+    
+    async def generate_stream(
+        self, 
+        system_prompt: str, 
+        user_prompt: str, 
+        temperature: float = 0.7
+    ) -> AsyncGenerator[str, None]:
+        """Streamuje tokeny odpowiedzi z DeepSeek"""
+        response = await self.client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            temperature=temperature,
+            stream=True
+        )
+        
+        async for chunk in response:
+            if chunk.choices and chunk.choices[0].delta.content:
+                yield chunk.choices[0].delta.content
+
+
 def get_provider(provider_name: Optional[str] = None, model: Optional[str] = None) -> LLMProvider:
     """
     Fabryka providerów LLM
@@ -262,13 +320,15 @@ def get_provider(provider_name: Optional[str] = None, model: Optional[str] = Non
     default_models = {
         "openai": "gpt-4o",
         "grok": "grok-beta",
-        "gemini": "gemini-1.5-pro"
+        "gemini": "gemini-1.5-pro",
+        "deepseek": "deepseek-chat"
     }
     
     providers = {
         "openai": OpenAIProvider,
         "grok": GrokProvider,
-        "gemini": GeminiProvider
+        "gemini": GeminiProvider,
+        "deepseek": DeepSeekProvider
     }
     
     if provider_name not in providers:
@@ -279,4 +339,5 @@ def get_provider(provider_name: Optional[str] = None, model: Optional[str] = Non
 
 
 # Lista dostępnych providerów
-AVAILABLE_PROVIDERS = ["openai", "grok", "gemini"]
+AVAILABLE_PROVIDERS = ["openai", "grok", "gemini", "deepseek"]
+
