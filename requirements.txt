@@ -1,0 +1,26 @@
+# Core
+python-dotenv>=1.0.0
+pydantic>=2.0.0
+
+# LLM Providers
+openai>=1.0.0
+google-generativeai>=0.3.0
+
+# Vector Database
+pinecone>=8.0.0
+
+# PDF Processing
+pypdf>=3.0.0
+pdfplumber>=0.10.0
+
+# Web UI - Streamlit (legacy)
+streamlit>=1.30.0
+
+# Web UI - FastAPI (new)
+fastapi>=0.109.0
+uvicorn>=0.27.0
+python-multipart>=0.0.6
+
+# Async support
+aiohttp>=3.9.0
+

@@ -1,0 +1,1783 @@
+/**
+ * AI Council - Full SPA Application
+ */
+
+// ========== STATE ==========
+let currentProvider = 'openai';
+let currentModel = 'gpt-4o';
+let attachmentText = '';
+let lastResult = null;
+let history = [];
+let sessions = [];
+let currentSessionId = null;
+let chatMode = false;
+let debateMode = false;  // Tryb debaty
+let currentRound = 0;    // Aktualna runda debaty
+let totalTokensUsed = 0;
+let estimatedCost = 0;
+let currentPage = 'dashboard';
+let specialists = [];
+
+// Models per provider with token costs
+const MODELS = {
+    openai: ['gpt-4o', 'gpt-4o-mini', 'gpt-4.1', 'gpt-5-nano', 'gpt-5-mini', 'gpt-5', 'o1-mini'],
+    grok: ['grok-2', 'grok-beta'],
+    gemini: ['gemini-2.0-flash-exp', 'gemini-1.5-pro', 'gemini-1.5-flash']
+};
+
+const TOKEN_COSTS = {
+    'gpt-4o': 0.005, 'gpt-4o-mini': 0.00015, 'gpt-4.1': 0.002, 'gpt-5': 0.01,
+    'grok-2': 0.002, 'gemini-1.5-pro': 0.00125
+};
+
+const AGENT_COLORS = {
+    // Core agents
+    'Strateg': { bg: 'bg-blue-500/10', text: 'text-blue-500', icon: 'chess', color: '#3b82f6' },
+    'Analityk': { bg: 'bg-green-500/10', text: 'text-green-500', icon: 'analytics', color: '#22c55e' },
+    'Praktyk': { bg: 'bg-orange-500/10', text: 'text-orange-500', icon: 'construction', color: '#f97316' },
+    'Ekspert': { bg: 'bg-purple-500/10', text: 'text-purple-500', icon: 'school', color: '#a855f7' },
+    'Syntezator': { bg: 'bg-pink-500/10', text: 'text-pink-500', icon: 'auto_awesome', color: '#ec4899' },
+    // Specialists
+    'Social Media': { bg: 'bg-rose-500/10', text: 'text-rose-500', icon: 'smartphone', color: '#f43f5e' },
+    'LinkedIn': { bg: 'bg-sky-500/10', text: 'text-sky-500', icon: 'business_center', color: '#0ea5e9' },
+    'SEO': { bg: 'bg-lime-500/10', text: 'text-lime-500', icon: 'search', color: '#84cc16' },
+    'Blog Post': { bg: 'bg-amber-500/10', text: 'text-amber-500', icon: 'edit_note', color: '#f59e0b' },
+    'Branding': { bg: 'bg-fuchsia-500/10', text: 'text-fuchsia-500', icon: 'palette', color: '#d946ef' }
+};
+
+// ========== DOM ELEMENTS ==========
+const queryForm = document.getElementById('query-form');
+const queryInput = document.getElementById('query-input');
+const fileInput = document.getElementById('file-input');
+const fileIndicator = document.getElementById('file-indicator');
+const fileName = document.getElementById('file-name');
+const providerSelect = document.getElementById('provider-select');
+const modelSelect = document.getElementById('model-select');
+const kbToggle = document.getElementById('kb-toggle');
+const welcomeState = document.getElementById('welcome-state');
+const loadingState = document.getElementById('loading-state');
+const resultsContent = document.getElementById('results-content');
+const queryDisplay = document.getElementById('query-display');
+const queryText = document.getElementById('query-text');
+const agentTabs = document.getElementById('agent-tabs');
+const tabContents = document.getElementById('tab-contents');
+const agentsList = document.getElementById('agents-list');
+const sourcesList = document.getElementById('sources-list');
+const sourcesSection = document.getElementById('sources-section');
+const recentSessionsList = document.getElementById('recent-sessions');
+
+// ========== INITIALIZATION ==========
+document.addEventListener('DOMContentLoaded', () => {
+    loadSettings();
+    loadStats();
+    loadAgents();
+    loadSessions();
+    loadSpecialists();
+    setupEventListeners();
+    updateModels();
+    navigateTo('dashboard');
+});
+
+function setupEventListeners() {
+    if (queryForm) queryForm.addEventListener('submit', handleSubmit);
+    if (providerSelect) providerSelect.addEventListener('change', (e) => {
+        currentProvider = e.target.value;
+        updateModels();
+        updateStatDisplay();
+    });
+    if (modelSelect) modelSelect.addEventListener('change', (e) => currentModel = e.target.value);
+    if (fileInput) fileInput.addEventListener('change', handleFileSelect);
+    if (queryInput) {
+        queryInput.addEventListener('input', autoResize);
+        queryInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                queryForm.dispatchEvent(new Event('submit'));
+            }
+        });
+    }
+
+    // PDF import
+    const pdfImportBtn = document.getElementById('pdf-import-btn');
+    const pdfImportInput = document.getElementById('pdf-import-input');
+    if (pdfImportBtn && pdfImportInput) {
+        pdfImportBtn.addEventListener('click', () => pdfImportInput.click());
+        pdfImportInput.addEventListener('change', handlePdfImport);
+    }
+
+    // Temperature slider
+    const tempSlider = document.getElementById('setting-temperature');
+    if (tempSlider) {
+        tempSlider.addEventListener('input', (e) => {
+            document.getElementById('temp-value').textContent = (e.target.value / 100).toFixed(1);
+        });
+    }
+}
+
+// ========== NAVIGATION ==========
+function navigateTo(page) {
+    currentPage = page;
+
+    // Hide all pages
+    document.querySelectorAll('.page-content').forEach(p => p.classList.add('hidden'));
+
+    // Show selected page
+    const pageEl = document.getElementById(`page-${page}`);
+    if (pageEl) pageEl.classList.remove('hidden');
+
+    // Update nav links
+    document.querySelectorAll('.nav-link').forEach(link => {
+        const isActive = link.dataset.page === page;
+        link.classList.toggle('bg-primary/10', isActive);
+        link.classList.toggle('text-primary', isActive);
+        link.classList.toggle('dark:text-white', isActive);
+        link.classList.toggle('font-medium', isActive);
+        link.classList.toggle('text-slate-600', !isActive);
+        link.classList.toggle('dark:text-text-secondary', !isActive);
+        link.classList.toggle('hover:bg-slate-100', !isActive);
+        link.classList.toggle('dark:hover:bg-white/5', !isActive);
+    });
+
+    // Load page-specific content
+    if (page === 'history') renderHistoryPage();
+    if (page === 'agents') renderAgentsPage();
+    if (page === 'settings') loadSettingsPage();
+}
+
+// ========== HISTORY PAGE ==========
+function renderHistoryPage() {
+    const container = document.getElementById('history-list');
+    if (!container) return;
+
+    if (sessions.length === 0) {
+        container.innerHTML = `
+            <div class="text-center py-12 text-text-secondary">
+                <span class="material-symbols-outlined text-4xl mb-4 block opacity-50">history</span>
+                <p>Brak zapisanych sesji</p>
+                <p class="text-sm mt-2">Twoje narady pojawią się tutaj</p>
+            </div>
+        `;
+        return;
+    }
+
+    container.innerHTML = sessions.map(session => `
+        <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-white/10 p-4 hover:border-primary/50 transition-colors cursor-pointer" onclick="loadSession(${session.id})">
+            <div class="flex items-start justify-between gap-4">
+                <div class="flex-1 min-w-0">
+                    <h4 class="font-medium text-slate-900 dark:text-white truncate">${escapeHtml(session.title)}</h4>
+                    <p class="text-sm text-text-secondary mt-1">${formatDate(session.timestamp)}</p>
+                    <p class="text-xs text-text-secondary mt-2">${session.history?.length || 0} wiadomości</p>
+                </div>
+                <div class="flex gap-2">
+                    <button onclick="event.stopPropagation(); deleteSession(${session.id})" class="p-2 text-text-secondary hover:text-red-400 transition-colors">
+                        <span class="material-symbols-outlined text-[18px]">delete</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    `).join('');
+}
+
+function deleteSession(sessionId) {
+    sessions = sessions.filter(s => s.id !== sessionId);
+    localStorage.setItem('ai_council_sessions', JSON.stringify(sessions));
+    renderHistoryPage();
+    renderSessions();
+    showToast('Sesja usunięta', 'success');
+}
+
+function clearAllSessions() {
+    if (confirm('Czy na pewno chcesz usunąć całą historię?')) {
+        sessions = [];
+        localStorage.removeItem('ai_council_sessions');
+        renderHistoryPage();
+        renderSessions();
+        showToast('Historia wyczyszczona', 'success');
+    }
+}
+
+// ========== AGENTS PAGE ==========
+function renderAgentsPage() {
+    const coreGrid = document.getElementById('core-agents-grid');
+    const specialistsGrid = document.getElementById('specialists-grid');
+    if (!coreGrid) return;
+
+    fetch('/api/agents')
+        .then(r => r.json())
+        .then(agents => {
+            coreGrid.innerHTML = agents.map(agent => {
+                const colors = AGENT_COLORS[agent.name] || { bg: 'bg-gray-500/10', text: 'text-gray-500', icon: 'person', color: '#6b7280' };
+                return `
+                    <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-white/10 p-5 hover:border-primary/30 transition-all">
+                        <div class="flex items-start justify-between mb-4">
+                            <div class="w-12 h-12 rounded-xl ${colors.bg} flex items-center justify-center text-2xl">
+                                ${agent.emoji}
+                            </div>
+                            <label class="relative inline-flex items-center cursor-pointer">
+                                <input type="checkbox" class="sr-only peer" ${agent.enabled ? 'checked' : ''} onchange="toggleAgentFromPage('${agent.name}', this.checked)">
+                                <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-primary"></div>
+                            </label>
+                        </div>
+                        <h4 class="font-bold text-slate-900 dark:text-white">${agent.name}</h4>
+                        <p class="text-sm text-text-secondary mt-1">${agent.role}</p>
+                        <p class="text-xs text-text-secondary/70 mt-3">${agent.description}</p>
+                    </div>
+                `;
+            }).join('');
+        })
+        .catch(err => {
+            coreGrid.innerHTML = '<p class="text-text-secondary col-span-3">Błąd ładowania agentów</p>';
+        });
+
+    // Render specialists
+    if (specialistsGrid) {
+        const specialistCards = specialists.map(spec => `
+            <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-white/10 p-5">
+                <div class="flex items-start justify-between mb-4">
+                    <div class="w-12 h-12 rounded-xl bg-indigo-500/10 flex items-center justify-center text-2xl">
+                        ${spec.emoji}
+                    </div>
+                    <button onclick="deleteSpecialist('${spec.name}')" class="text-text-secondary hover:text-red-400">
+                        <span class="material-symbols-outlined text-[18px]">delete</span>
+                    </button>
+                </div>
+                <h4 class="font-bold text-slate-900 dark:text-white">${spec.name}</h4>
+                <p class="text-sm text-text-secondary mt-1">${spec.role}</p>
+            </div>
+        `).join('');
+
+        specialistsGrid.innerHTML = specialistCards + `
+            <div class="border-2 border-dashed border-gray-300 dark:border-white/10 rounded-xl p-6 flex flex-col items-center justify-center text-center cursor-pointer hover:border-primary/50 transition-colors" onclick="showAddSpecialistModal()">
+                <span class="material-symbols-outlined text-4xl text-text-secondary mb-2">add_circle_outline</span>
+                <p class="text-sm text-text-secondary">Dodaj specjalistę</p>
+            </div>
+        `;
+    }
+}
+
+async function toggleAgentFromPage(name, enabled) {
+    try {
+        await fetch(`/api/agents/${encodeURIComponent(name)}/toggle`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled })
+        });
+        showToast(`${name} ${enabled ? 'włączony' : 'wyłączony'}`, 'success');
+        loadAgents(); // Refresh sidebar
+    } catch (err) {
+        showToast('Błąd zmiany statusu', 'error');
+    }
+}
+
+// ========== SPECIALISTS ==========
+function showAddSpecialistModal() {
+    document.getElementById('specialist-modal').classList.remove('hidden');
+}
+
+function hideAddSpecialistModal() {
+    document.getElementById('specialist-modal').classList.add('hidden');
+    document.getElementById('specialist-name').value = '';
+    document.getElementById('specialist-role').value = '';
+    document.getElementById('specialist-emoji').value = '';
+    document.getElementById('specialist-prompt').value = '';
+}
+
+function addSpecialist() {
+    const name = document.getElementById('specialist-name').value.trim();
+    const role = document.getElementById('specialist-role').value.trim();
+    const emoji = document.getElementById('specialist-emoji').value.trim() || '🔧';
+    const prompt = document.getElementById('specialist-prompt').value.trim();
+
+    if (!name || !role) {
+        showToast('Wypełnij nazwę i rolę', 'error');
+        return;
+    }
+
+    const specialist = { name, role, emoji, prompt, enabled: true };
+    specialists.push(specialist);
+    localStorage.setItem('ai_council_specialists', JSON.stringify(specialists));
+
+    hideAddSpecialistModal();
+    renderAgentsPage();
+    showToast(`Dodano specjalistę: ${name}`, 'success');
+}
+
+function deleteSpecialist(name) {
+    specialists = specialists.filter(s => s.name !== name);
+    localStorage.setItem('ai_council_specialists', JSON.stringify(specialists));
+    renderAgentsPage();
+    showToast('Specjalista usunięty', 'success');
+}
+
+function loadSpecialists() {
+    const saved = localStorage.getItem('ai_council_specialists');
+    if (saved) specialists = JSON.parse(saved);
+}
+
+// ========== SETTINGS PAGE ==========
+function loadSettingsPage() {
+    const settings = JSON.parse(localStorage.getItem('ai_council_settings') || '{}');
+
+    document.getElementById('setting-default-provider').value = settings.defaultProvider || 'openai';
+    document.getElementById('setting-default-model').value = settings.defaultModel || 'gpt-4o';
+    document.getElementById('setting-temperature').value = (settings.temperature || 0.7) * 100;
+    document.getElementById('temp-value').textContent = (settings.temperature || 0.7).toFixed(1);
+    document.getElementById('setting-kb-default').checked = settings.kbDefault !== false;
+    document.getElementById('setting-show-sources').checked = settings.showSources !== false;
+
+    // Load KB stats
+    fetch('/api/stats')
+        .then(r => r.json())
+        .then(stats => {
+            document.getElementById('settings-kb-count').textContent = (stats.total_vectors || 0).toLocaleString();
+        });
+}
+
+function saveSettings() {
+    const settings = {
+        defaultProvider: document.getElementById('setting-default-provider').value,
+        defaultModel: document.getElementById('setting-default-model').value,
+        temperature: parseInt(document.getElementById('setting-temperature').value) / 100,
+        kbDefault: document.getElementById('setting-kb-default').checked,
+        showSources: document.getElementById('setting-show-sources').checked
+    };
+
+    localStorage.setItem('ai_council_settings', JSON.stringify(settings));
+    showToast('Ustawienia zapisane', 'success');
+
+    // Apply settings
+    currentProvider = settings.defaultProvider;
+    currentModel = settings.defaultModel;
+    providerSelect.value = currentProvider;
+    updateModels();
+    modelSelect.value = currentModel;
+    kbToggle.checked = settings.kbDefault;
+}
+
+function loadSettings() {
+    const settings = JSON.parse(localStorage.getItem('ai_council_settings') || '{}');
+    if (settings.defaultProvider) currentProvider = settings.defaultProvider;
+    if (settings.defaultModel) currentModel = settings.defaultModel;
+    if (settings.kbDefault !== undefined && kbToggle) kbToggle.checked = settings.kbDefault;
+}
+
+function resetSettings() {
+    if (confirm('Przywrócić domyślne ustawienia?')) {
+        localStorage.removeItem('ai_council_settings');
+        loadSettingsPage();
+        showToast('Przywrócono domyślne ustawienia', 'success');
+    }
+}
+
+function setTheme(theme) {
+    if (theme === 'light') {
+        document.documentElement.classList.remove('dark');
+    } else if (theme === 'dark') {
+        document.documentElement.classList.add('dark');
+    } else {
+        // System
+        if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
+            document.documentElement.classList.add('dark');
+        } else {
+            document.documentElement.classList.remove('dark');
+        }
+    }
+    localStorage.setItem('ai_council_theme', theme);
+}
+
+function togglePasswordVisibility(inputId) {
+    const input = document.getElementById(inputId);
+    input.type = input.type === 'password' ? 'text' : 'password';
+}
+
+// ========== MODEL FUNCTIONS ==========
+function updateModels() {
+    const models = MODELS[currentProvider] || [];
+    if (modelSelect) {
+        modelSelect.innerHTML = models.map(m => `<option value="${m}">${m}</option>`).join('');
+        if (!models.includes(currentModel)) currentModel = models[0];
+        modelSelect.value = currentModel;
+    }
+}
+
+function autoResize() {
+    if (queryInput) {
+        queryInput.style.height = 'auto';
+        queryInput.style.height = Math.min(queryInput.scrollHeight, 200) + 'px';
+    }
+}
+
+// ========== FILE HANDLING ==========
+async function handleFileSelect(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    try {
+        attachmentText = file.name.endsWith('.txt') || file.name.endsWith('.md')
+            ? await file.text()
+            : `[Załączony plik: ${file.name}]`;
+        fileName.textContent = file.name;
+        fileIndicator.classList.remove('hidden');
+        updateContextFiles(file.name);
+    } catch (err) {
+        showToast('Błąd odczytu pliku', 'error');
+    }
+}
+
+async function handlePdfImport(e) {
+    const file = e.target.files[0];
+    if (!file || !file.name.endsWith('.pdf')) {
+        showToast('Wybierz plik PDF', 'error');
+        return;
+    }
+    showToast('Importowanie do bazy wiedzy...', 'info');
+    const formData = new FormData();
+    formData.append('file', file);
+    try {
+        const response = await fetch('/api/ingest', { method: 'POST', body: formData });
+        if (!response.ok) throw new Error((await response.json()).detail || 'Import failed');
+        const result = await response.json();
+        showToast(`✓ Zaimportowano ${result.chunks_count} chunków`, 'success');
+        loadStats();
+    } catch (err) {
+        showToast('Błąd importu: ' + err.message, 'error');
+    }
+    e.target.value = '';
+}
+
+// ========== DELIBERATION ==========
+let streamingAgentResponses = {};
+let streamingEventSource = null;
+
+async function handleSubmit(e) {
+    e.preventDefault();
+    const query = queryInput.value.trim();
+    if (!query) return;
+
+    // Cancel any existing stream
+    if (streamingEventSource) {
+        streamingEventSource.close();
+        streamingEventSource = null;
+    }
+
+    queryText.textContent = query;
+    queryDisplay.classList.remove('hidden');
+
+    // Choose mode: Debate or Council
+    if (debateMode) {
+        debateStream(query);
+    } else {
+        deliberateStream(query);
+    }
+
+    queryInput.value = '';
+    attachmentText = '';
+    fileIndicator.classList.add('hidden');
+    autoResize();
+}
+
+function deliberateStream(query) {
+    const params = new URLSearchParams({
+        query: query,
+        provider: currentProvider,
+        model: currentModel,
+        use_knowledge_base: kbToggle?.checked ?? true
+    });
+
+    // Reset streaming state
+    streamingAgentResponses = {};
+
+    // Show streaming UI
+    showStreamingUI();
+
+    streamingEventSource = new EventSource(`/api/deliberate/stream?${params}`);
+
+    streamingEventSource.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+
+        switch (data.event) {
+            case 'sources':
+                handleSources(data.sources);
+                break;
+
+            case 'agent_start':
+                handleAgentStart(data.agent, data.emoji, data.role);
+                break;
+
+            case 'delta':
+                handleDelta(data.agent, data.content);
+                break;
+
+            case 'agent_done':
+                handleAgentDone(data.agent);
+                break;
+
+            case 'synthesis_start':
+                handleSynthesisStart(data.agent, data.emoji, data.role);
+                break;
+
+            case 'synthesis_done':
+                handleSynthesisDone();
+                break;
+
+            case 'complete':
+                handleComplete(data.total_agents);
+                streamingEventSource.close();
+                streamingEventSource = null;
+                break;
+
+            case 'error':
+                showToast('Błąd streamingu: ' + data.message, 'error');
+                streamingEventSource.close();
+                streamingEventSource = null;
+                showWelcome();
+                break;
+        }
+    };
+
+    streamingEventSource.onerror = (error) => {
+        console.error('SSE Error:', error);
+        streamingEventSource.close();
+        streamingEventSource = null;
+        showToast('Połączenie z serwerem przerwane', 'error');
+    };
+}
+
+function showStreamingUI() {
+    showResults();
+
+    // Clear previous content
+    agentTabs.innerHTML = '';
+    tabContents.innerHTML = `
+        <div class="streaming-placeholder text-center py-8 text-text-secondary">
+            <div class="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-3"></div>
+            <p>Agenci rozpoczynają analizę...</p>
+        </div>
+    `;
+}
+
+function handleSources(sources) {
+    if (sources && sources.length > 0) {
+        sourcesSection.classList.remove('hidden');
+        sourcesList.innerHTML = sources.map(s =>
+            `<div class="source-badge"><span>${s.emoji || '📄'}</span><span class="truncate">${s.title}</span></div>`
+        ).join('');
+    }
+}
+
+function handleAgentStart(agentName, emoji, role) {
+    // Remove placeholder if exists
+    const placeholder = tabContents.querySelector('.streaming-placeholder');
+    if (placeholder) placeholder.remove();
+
+    // Initialize agent response
+    streamingAgentResponses[agentName] = { emoji, role, content: '' };
+
+    // Get agent colors
+    const colors = AGENT_COLORS[agentName] || { bg: 'bg-gray-500/10', text: 'text-gray-500', icon: 'person' };
+
+    // Add tab button
+    const tabBtn = document.createElement('button');
+    tabBtn.className = 'tab-button flex items-center gap-2 px-4 py-2 rounded-t-lg text-sm font-medium transition-colors active';
+    tabBtn.dataset.tab = agentName;
+    tabBtn.innerHTML = `
+        <div class="w-6 h-6 rounded-full ${colors.bg} flex items-center justify-center ${colors.text} text-xs">
+            <span class="material-symbols-outlined text-[16px]">${colors.icon}</span>
+        </div>
+        <span>${agentName}</span>
+        <span class="typing-indicator ml-1"></span>
+    `;
+    tabBtn.onclick = () => switchTab(agentName);
+
+    // Deactivate other tabs
+    agentTabs.querySelectorAll('.tab-button').forEach(btn => btn.classList.remove('active'));
+    agentTabs.appendChild(tabBtn);
+
+    // Add content area
+    const contentDiv = document.createElement('div');
+    contentDiv.className = 'tab-content active';
+    contentDiv.id = `tab-${agentName}`;
+    contentDiv.innerHTML = `
+        <div class="agent-card">
+            <div class="agent-card-header">
+                <div class="w-10 h-10 rounded-full ${colors.bg} flex items-center justify-center ${colors.text}">
+                    <span class="material-symbols-outlined">${colors.icon}</span>
+                </div>
+                <div>
+                    <h3 class="font-bold text-sm text-white">${emoji} ${agentName}</h3>
+                    <p class="text-[10px] text-text-secondary uppercase tracking-wide">${role}</p>
+                </div>
+                <span class="ml-auto text-xs font-mono text-green-500 bg-green-500/10 px-2 py-0.5 rounded streaming-badge">
+                    <span class="animate-pulse">●</span> Streaming
+                </span>
+            </div>
+            <div class="agent-content font-body streaming-content" id="content-${agentName}"><span class="typing-cursor"></span></div>
+        </div>
+    `;
+
+    // Hide other content areas
+    tabContents.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+    tabContents.appendChild(contentDiv);
+}
+
+function handleDelta(agentName, token) {
+    if (!streamingAgentResponses[agentName]) return;
+
+    streamingAgentResponses[agentName].content += token;
+
+    const contentEl = document.getElementById(`content-${agentName}`);
+    if (contentEl) {
+        // Remove cursor, add token, add cursor back
+        const cursor = contentEl.querySelector('.typing-cursor');
+        if (cursor) cursor.remove();
+
+        contentEl.innerHTML = formatContent(streamingAgentResponses[agentName].content) + '<span class="typing-cursor"></span>';
+    }
+}
+
+function handleAgentDone(agentName) {
+    // Remove typing indicators
+    const tab = agentTabs.querySelector(`[data-tab="${agentName}"]`);
+    if (tab) {
+        const indicator = tab.querySelector('.typing-indicator');
+        if (indicator) indicator.remove();
+    }
+
+    const contentEl = document.getElementById(`content-${agentName}`);
+    if (contentEl) {
+        // Remove cursor
+        const cursor = contentEl.querySelector('.typing-cursor');
+        if (cursor) cursor.remove();
+
+        // Update badge
+        const badge = contentEl.closest('.agent-card')?.querySelector('.streaming-badge');
+        if (badge) {
+            badge.innerHTML = '✓ Gotowe';
+            badge.classList.remove('text-green-500', 'bg-green-500/10');
+            badge.classList.add('text-blue-400', 'bg-blue-400/10');
+        }
+    }
+}
+
+function handleSynthesisStart(agentName, emoji, role) {
+    handleAgentStart(agentName, emoji, role);
+}
+
+function handleSynthesisDone() {
+    handleAgentDone('Syntezator');
+}
+
+function handleComplete(totalAgents) {
+    // Build lastResult for session saving
+    const agentResponses = Object.entries(streamingAgentResponses).map(([name, data]) => ({
+        agent_name: `${data.emoji} ${name}`,
+        role: data.role,
+        content: data.content,
+        provider_used: `${currentProvider} (${currentModel})`
+    }));
+
+    const synthesis = streamingAgentResponses['Syntezator'] ? {
+        agent_name: '🔮 Syntezator',
+        role: 'Synthesizer',
+        content: streamingAgentResponses['Syntezator'].content,
+        provider_used: `${currentProvider} (${currentModel})`
+    } : null;
+
+    lastResult = {
+        query: queryText.textContent,
+        timestamp: new Date().toISOString(),
+        agent_responses: agentResponses.filter(r => r.agent_name !== '🔮 Syntezator'),
+        synthesis: synthesis,
+        sources: []
+    };
+
+    history.push({
+        query: queryText.textContent,
+        synthesis: synthesis?.content || '',
+        timestamp: new Date().toISOString()
+    });
+
+    saveCurrentSession(queryText.textContent);
+    showToast('Narada zakończona', 'success');
+}
+
+// Keep original deliberate for fallback/non-streaming mode
+async function deliberate(query) {
+    const chatToggleEl = document.getElementById('chat-toggle');
+    const useChatMode = chatToggleEl ? chatToggleEl.checked : false;
+
+    const response = await fetch('/api/deliberate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            query, provider: currentProvider, model: currentModel,
+            use_knowledge_base: kbToggle?.checked ?? true,
+            chat_mode: useChatMode,
+            attachment_text: attachmentText,
+            history: useChatMode ? history.slice(-3) : []
+        })
+    });
+    if (!response.ok) throw new Error((await response.json()).detail || 'API Error');
+    return await response.json();
+}
+
+// ========== DEBATE MODE ==========
+let debateRounds = [];
+let debateConsensus = { points: [], disagreements: [] };
+
+function debateStream(query) {
+    const params = new URLSearchParams({
+        query: query,
+        max_rounds: 3,
+        provider: currentProvider,
+        model: currentModel,
+        use_knowledge_base: kbToggle?.checked ?? true
+    });
+
+    // Reset debate state
+    debateRounds = [];
+    debateConsensus = { points: [], disagreements: [] };
+    currentRound = 0;
+    streamingAgentResponses = {};
+
+    // Show debate UI
+    showDebateUI();
+
+    streamingEventSource = new EventSource(`/api/debate/stream?${params}`);
+
+    streamingEventSource.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+
+        switch (data.event) {
+            case 'sources':
+                handleSources(data.sources);
+                break;
+
+            case 'round_start':
+                handleRoundStart(data.round, data.type, data.title);
+                break;
+
+            case 'agent_start':
+                handleDebateAgentStart(data.agent, data.emoji, data.role, data.round, data.reacting_to);
+                break;
+
+            case 'delta':
+                handleDelta(data.agent, data.content);
+                break;
+
+            case 'agent_done':
+                handleAgentDone(data.agent);
+                break;
+
+            case 'round_done':
+                handleRoundDone(data.round);
+                break;
+
+            case 'consensus':
+                handleConsensusResult(data.consensus_points, data.disagreement_points);
+                break;
+
+            case 'complete':
+                handleDebateComplete(data.total_rounds, data.total_agents);
+                streamingEventSource.close();
+                streamingEventSource = null;
+                break;
+
+            case 'error':
+                showToast('Błąd debaty: ' + data.message, 'error');
+                streamingEventSource.close();
+                streamingEventSource = null;
+                break;
+        }
+    };
+
+    streamingEventSource.onerror = (error) => {
+        console.error('Debate SSE Error:', error);
+        streamingEventSource.close();
+        streamingEventSource = null;
+        showToast('Połączenie z serwerem przerwane', 'error');
+    };
+}
+
+function showDebateUI() {
+    showResults();
+
+    agentTabs.innerHTML = '';
+    tabContents.innerHTML = `
+        <div class="debate-container">
+            <div class="debate-header flex items-center gap-3 mb-6 pb-4 border-b border-white/10">
+                <span class="text-2xl">⚔️</span>
+                <div>
+                    <h3 class="text-lg font-bold">Debata Rady AI</h3>
+                    <p class="text-sm text-text-secondary">Wielorundowa dyskusja z konsensusem</p>
+                </div>
+                <div id="round-indicator" class="ml-auto px-3 py-1 bg-primary/20 text-primary rounded-full text-sm font-medium">
+                    Runda 0/3
+                </div>
+            </div>
+            <div id="debate-rounds" class="space-y-6"></div>
+            <div id="consensus-panel" class="hidden mt-6"></div>
+        </div>
+    `;
+}
+
+function handleRoundStart(roundNum, roundType, title) {
+    currentRound = roundNum;
+
+    // Update indicator
+    const indicator = document.getElementById('round-indicator');
+    if (indicator) {
+        indicator.textContent = `Runda ${roundNum}/3`;
+    }
+
+    // Create round container
+    const roundsContainer = document.getElementById('debate-rounds');
+    if (!roundsContainer) return;
+
+    const roundTypeIcons = {
+        'initial': '💭',
+        'reaction': '💬',
+        'consensus': '🤝'
+    };
+
+    const roundDiv = document.createElement('div');
+    roundDiv.className = 'debate-round';
+    roundDiv.id = `round-${roundNum}`;
+    roundDiv.innerHTML = `
+        <div class="round-header flex items-center gap-2 mb-4">
+            <span class="text-xl">${roundTypeIcons[roundType] || '📍'}</span>
+            <h4 class="font-bold text-white">Runda ${roundNum}: ${title}</h4>
+            <div class="flex-1 h-px bg-white/10 ml-2"></div>
+            <span class="text-xs text-text-secondary px-2 py-1 bg-white/5 rounded">${roundType}</span>
+        </div>
+        <div class="round-responses grid gap-4" id="round-${roundNum}-responses"></div>
+    `;
+    roundsContainer.appendChild(roundDiv);
+}
+
+function handleDebateAgentStart(agentName, emoji, role, round, reactingTo) {
+    const responsesContainer = document.getElementById(`round-${round}-responses`);
+    if (!responsesContainer) return;
+
+    // Initialize agent response
+    streamingAgentResponses[agentName] = { emoji, role, content: '', round };
+
+    const colors = AGENT_COLORS[agentName] || { bg: 'bg-gray-500/10', text: 'text-gray-500', icon: 'person' };
+
+    const responseDiv = document.createElement('div');
+    responseDiv.className = 'debate-response agent-card';
+    responseDiv.id = `debate-${agentName}-${round}`;
+
+    const reactingInfo = reactingTo ? `
+        <div class="reacting-to text-xs text-text-secondary mb-2 flex items-center gap-1">
+            <span class="material-symbols-outlined text-[14px]">reply</span>
+            Odpowiedź na stanowisko: <strong>${reactingTo}</strong>
+        </div>
+    ` : '';
+
+    responseDiv.innerHTML = `
+        ${reactingInfo}
+        <div class="agent-card-header">
+            <div class="w-10 h-10 rounded-full ${colors.bg} flex items-center justify-center ${colors.text}">
+                <span class="material-symbols-outlined">${colors.icon}</span>
+            </div>
+            <div>
+                <h3 class="font-bold text-sm text-white">${emoji} ${agentName}</h3>
+                <p class="text-[10px] text-text-secondary uppercase tracking-wide">${role}</p>
+            </div>
+            <span class="ml-auto text-xs font-mono text-green-500 bg-green-500/10 px-2 py-0.5 rounded streaming-badge">
+                <span class="animate-pulse">●</span> Streaming
+            </span>
+        </div>
+        <div class="agent-content font-body streaming-content" id="content-${agentName}"><span class="typing-cursor"></span></div>
+    `;
+
+    responsesContainer.appendChild(responseDiv);
+}
+
+function handleRoundDone(roundNum) {
+    // Mark round as complete
+    const roundEl = document.getElementById(`round-${roundNum}`);
+    if (roundEl) {
+        const header = roundEl.querySelector('.round-header');
+        if (header) {
+            const badge = header.querySelector('.bg-white\\/5');
+            if (badge) {
+                badge.textContent = '✓ Ukończona';
+                badge.classList.add('bg-green-500/20', 'text-green-400');
+            }
+        }
+    }
+}
+
+function handleConsensusResult(consensusPoints, disagreementPoints) {
+    debateConsensus = { points: consensusPoints, disagreements: disagreementPoints };
+
+    const panel = document.getElementById('consensus-panel');
+    if (!panel) return;
+
+    panel.classList.remove('hidden');
+    panel.innerHTML = `
+        <div class="consensus-summary bg-gradient-to-br from-surface-dark to-surface-darker rounded-xl border border-white/10 p-6">
+            <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
+                <span>🎯</span> Podsumowanie Debaty
+            </h3>
+            
+            <div class="grid md:grid-cols-2 gap-4">
+                <div class="consensus-box bg-green-500/10 border border-green-500/20 rounded-lg p-4">
+                    <h4 class="font-bold text-green-400 mb-2 flex items-center gap-2">
+                        <span class="material-symbols-outlined text-[18px]">check_circle</span>
+                        Punkty konsensusu
+                    </h4>
+                    <ul class="space-y-2 text-sm">
+                        ${consensusPoints.length > 0
+            ? consensusPoints.map(p => `<li class="flex items-start gap-2"><span class="text-green-400">✓</span> ${escapeHtml(p)}</li>`).join('')
+            : '<li class="text-text-secondary italic">Brak zidentyfikowanych punktów</li>'
+        }
+                    </ul>
+                </div>
+                
+                <div class="disagreement-box bg-orange-500/10 border border-orange-500/20 rounded-lg p-4">
+                    <h4 class="font-bold text-orange-400 mb-2 flex items-center gap-2">
+                        <span class="material-symbols-outlined text-[18px]">warning</span>
+                        Punkty sporne
+                    </h4>
+                    <ul class="space-y-2 text-sm">
+                        ${disagreementPoints.length > 0
+            ? disagreementPoints.map(p => `<li class="flex items-start gap-2"><span class="text-orange-400">⚠</span> ${escapeHtml(p)}</li>`).join('')
+            : '<li class="text-text-secondary italic">Brak punktów spornych</li>'
+        }
+                    </ul>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+function handleDebateComplete(totalRounds, totalAgents) {
+    showToast(`Debata zakończona! ${totalRounds} rund, ${totalAgents} agentów`, 'success');
+
+    // Update indicator
+    const indicator = document.getElementById('round-indicator');
+    if (indicator) {
+        indicator.textContent = '✓ Zakończona';
+        indicator.classList.remove('bg-primary/20', 'text-primary');
+        indicator.classList.add('bg-green-500/20', 'text-green-400');
+    }
+}
+
+function toggleDebateMode() {
+    debateMode = !debateMode;
+
+    const councilBtn = document.getElementById('mode-council');
+    const debateBtn = document.getElementById('mode-debate');
+
+    if (councilBtn && debateBtn) {
+        councilBtn.classList.toggle('active', !debateMode);
+        debateBtn.classList.toggle('active', debateMode);
+    }
+
+    // Update header text
+    const headerTitle = document.querySelector('#page-dashboard header h2');
+    if (headerTitle) {
+        headerTitle.textContent = debateMode ? '⚔️ Debata Rady AI' : '🏛️ Narada Rady AI';
+    }
+
+    showToast(debateMode ? 'Tryb debaty włączony' : 'Tryb narady włączony', 'info');
+}
+
+// ========== UI STATE ==========
+function showWelcome() {
+    welcomeState?.classList.remove('hidden');
+    loadingState?.classList.add('hidden');
+    resultsContent?.classList.add('hidden');
+    queryDisplay?.classList.add('hidden');
+}
+
+function showLoading() {
+    welcomeState?.classList.add('hidden');
+    loadingState?.classList.remove('hidden');
+    resultsContent?.classList.add('hidden');
+}
+
+function showResults() {
+    welcomeState?.classList.add('hidden');
+    loadingState?.classList.add('hidden');
+    resultsContent?.classList.remove('hidden');
+
+    // Auto-scroll to results
+    const resultsArea = document.getElementById('results-area');
+    if (resultsArea) {
+        setTimeout(() => {
+            resultsArea.scrollTo({ top: resultsArea.scrollHeight, behavior: 'smooth' });
+        }, 100);
+    }
+}
+
+// ========== RENDER RESULTS ==========
+function renderResults(result) {
+    showResults();
+    const agents = result.agent_responses || [];
+    const hasSynthesis = !!result.synthesis;
+
+    let tabsHtml = agents.map((agent, i) => {
+        const name = agent.agent_name.replace(/^[^\s]+\s/, '');
+        const colors = AGENT_COLORS[name] || { bg: 'bg-gray-500/10', text: 'text-gray-500', icon: 'person' };
+        return `
+            <button class="tab-button flex items-center gap-2 px-4 py-2 rounded-t-lg text-sm font-medium transition-colors ${i === 0 ? 'active' : ''}" data-tab="${i}">
+                <div class="w-6 h-6 rounded-full ${colors.bg} flex items-center justify-center ${colors.text} text-xs">
+                    <span class="material-symbols-outlined text-[16px]">${colors.icon}</span>
+                </div>
+                <span>${name}</span>
+            </button>
+        `;
+    }).join('');
+
+    if (hasSynthesis) {
+        tabsHtml += `<button class="tab-button flex items-center gap-2 px-4 py-2 rounded-t-lg text-sm font-medium" data-tab="synthesis">
+            <span class="material-symbols-outlined text-primary text-[16px]">auto_awesome</span><span>Synteza</span>
+        </button>`;
+    }
+    agentTabs.innerHTML = tabsHtml;
+
+    let contentsHtml = agents.map((agent, i) => {
+        const name = agent.agent_name.replace(/^[^\s]+\s/, '');
+        const colors = AGENT_COLORS[name] || { bg: 'bg-gray-500/10', text: 'text-gray-500', icon: 'person' };
+        return `
+            <div class="tab-content ${i === 0 ? 'active' : ''}" id="tab-${i}">
+                <div class="agent-card">
+                    <div class="agent-card-header">
+                        <div class="w-10 h-10 rounded-full ${colors.bg} flex items-center justify-center ${colors.text}">
+                            <span class="material-symbols-outlined">${colors.icon}</span>
+                        </div>
+                        <div>
+                            <h3 class="font-bold text-sm text-white">${agent.agent_name}</h3>
+                            <p class="text-[10px] text-text-secondary uppercase tracking-wide">${agent.role}</p>
+                        </div>
+                        <span class="ml-auto text-xs font-mono text-green-500 bg-green-500/10 px-2 py-0.5 rounded">${agent.provider_used}</span>
+                    </div>
+                    <div class="agent-content font-body">${formatContent(agent.content)}</div>
+                    <div class="mt-4 pt-3 border-t border-white/5 flex gap-2">
+                        <button onclick="agreeWith('${name}')" class="text-xs font-medium text-text-secondary hover:text-primary transition-colors flex items-center gap-1">
+                            <span class="material-symbols-outlined text-[16px]">thumb_up</span> Zgadzam się
+                        </button>
+                        <button onclick="copyAgentResponse(${i})" class="text-xs font-medium text-text-secondary hover:text-primary transition-colors flex items-center gap-1">
+                            <span class="material-symbols-outlined text-[16px]">content_copy</span> Kopiuj
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join('');
+
+    if (hasSynthesis) {
+        contentsHtml += `
+            <div class="tab-content" id="tab-synthesis">
+                <div class="synthesis-card">
+                    <div class="synthesis-card-inner">
+                        <div class="flex flex-col md:flex-row gap-6">
+                            <div class="flex-1">
+                                <div class="flex items-center gap-2 mb-4">
+                                    <span class="material-symbols-outlined text-primary">auto_awesome</span>
+                                    <h3 class="text-base font-bold text-white uppercase tracking-wide">Rekomendacja Rady</h3>
+                                </div>
+                                <div class="agent-content font-body text-lg">${formatContent(result.synthesis.content)}</div>
+                                <div class="mt-6 flex flex-wrap gap-3">
+                                    <button onclick="copyToClipboard()" class="px-4 py-2 bg-primary hover:bg-primary-hover text-white text-sm font-medium rounded-lg transition-colors shadow-lg shadow-primary/20">Kopiuj odpowiedź</button>
+                                    <button onclick="exportToMarkdown()" class="px-4 py-2 bg-white/5 hover:bg-white/10 text-white text-sm font-medium rounded-lg transition-colors border border-white/10">📄 Eksportuj MD</button>
+                                    <button onclick="generatePlan()" class="px-4 py-2 bg-white/5 hover:bg-white/10 text-white text-sm font-medium rounded-lg transition-colors border border-white/10">📋 Wygeneruj plan</button>
+                                </div>
+                            </div>
+                            <div class="w-full md:w-64 shrink-0 bg-black/20 rounded-lg p-4 flex flex-col gap-3 border border-white/5">
+                                <h4 class="text-xs font-bold text-text-secondary uppercase">Analiza wpływu</h4>
+                                <div><div class="flex justify-between text-xs mb-1"><span class="text-gray-400">Pewność syntezy</span><span class="text-green-400">Wysoka</span></div><div class="impact-bar"><div class="impact-bar-fill bg-green-400" style="width: 85%"></div></div></div>
+                                <div><div class="flex justify-between text-xs mb-1"><span class="text-gray-400">Zgodność agentów</span><span class="text-blue-400">${agents.length}/5</span></div><div class="impact-bar"><div class="impact-bar-fill bg-blue-400" style="width: ${agents.length * 20}%"></div></div></div>
+                                <div><div class="flex justify-between text-xs mb-1"><span class="text-gray-400">Źródła z bazy</span><span class="text-purple-400">${result.sources?.length || 0}</span></div><div class="impact-bar"><div class="impact-bar-fill bg-purple-400" style="width: ${Math.min((result.sources?.length || 0) * 20, 100)}%"></div></div></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    tabContents.innerHTML = contentsHtml;
+    document.querySelectorAll('.tab-button').forEach(btn => btn.addEventListener('click', () => switchTab(btn.dataset.tab)));
+
+    if (result.sources?.length > 0) {
+        sourcesSection.classList.remove('hidden');
+        sourcesList.innerHTML = result.sources.map(s => `<div class="source-badge"><span>${s.emoji}</span><span class="truncate">${s.title}</span></div>`).join('');
+    } else {
+        sourcesSection.classList.add('hidden');
+    }
+}
+
+function switchTab(tabId) {
+    document.querySelectorAll('.tab-button').forEach(btn => btn.classList.toggle('active', btn.dataset.tab === tabId));
+    document.querySelectorAll('.tab-content').forEach(content => content.classList.toggle('active', content.id === `tab-${tabId}`));
+}
+
+function formatContent(text) {
+    if (!text) return '';
+    return text
+        .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+        .replace(/\n\n/g, '</p><p>')
+        .replace(/\n- /g, '</p><ul><li>')
+        .replace(/\n(\d+)\. /g, '</p><ol><li>')
+        .split('\n').join('<br>');
+}
+
+// ========== AGENT FUNCTIONS ==========
+async function loadAgents() {
+    try {
+        const response = await fetch('/api/agents');
+        const agents = await response.json();
+
+        if (agentsList) {
+            agentsList.innerHTML = agents.map(agent => {
+                const colors = AGENT_COLORS[agent.name] || { bg: 'bg-gray-500/20', text: 'text-gray-500' };
+                return `
+                    <div class="agent-list-item flex items-center gap-3 p-2 rounded-lg bg-white/5 border border-transparent cursor-pointer" data-agent="${agent.name}">
+                        <div class="w-8 h-8 rounded-full ${colors.bg} ${colors.text} flex items-center justify-center text-lg">${agent.emoji}</div>
+                        <div class="flex-1 min-w-0">
+                            <p class="text-sm font-medium text-white">${agent.name}</p>
+                            <p class="text-xs text-text-secondary truncate">${agent.description}</p>
+                        </div>
+                        <label class="relative inline-flex items-center cursor-pointer">
+                            <input type="checkbox" class="sr-only peer agent-toggle" data-agent="${agent.name}" ${agent.enabled ? 'checked' : ''}>
+                            <div class="w-9 h-5 bg-gray-700 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary"></div>
+                        </label>
+                    </div>
+                `;
+            }).join('');
+
+            document.querySelectorAll('.agent-toggle').forEach(toggle => {
+                toggle.addEventListener('change', (e) => toggleAgent(e.target.dataset.agent, e.target.checked));
+            });
+        }
+
+        document.getElementById('stat-agents').textContent = agents.filter(a => a.enabled).length;
+        document.getElementById('agents-status').textContent = `Aktywna • ${agents.filter(a => a.enabled).length} Agentów`;
+    } catch (err) {
+        console.error('Failed to load agents:', err);
+    }
+}
+
+async function toggleAgent(name, enabled) {
+    try {
+        await fetch(`/api/agents/${encodeURIComponent(name)}/toggle`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled })
+        });
+        const enabledCount = document.querySelectorAll('.agent-toggle:checked').length;
+        document.getElementById('stat-agents').textContent = enabledCount;
+        document.getElementById('agents-status').textContent = `Aktywna • ${enabledCount} Agentów`;
+    } catch (err) {
+        showToast('Błąd zmiany statusu agenta', 'error');
+    }
+}
+
+function agreeWith(agentName) { showToast(`👍 Zgadzasz się z ${agentName}`, 'success'); }
+function copyAgentResponse(index) {
+    if (lastResult?.agent_responses?.[index]) {
+        navigator.clipboard.writeText(lastResult.agent_responses[index].content);
+        showToast('Skopiowano odpowiedź agenta', 'success');
+    }
+}
+
+// ========== EXPORT & ACTIONS ==========
+function copyToClipboard() {
+    if (lastResult?.synthesis?.content) {
+        navigator.clipboard.writeText(lastResult.synthesis.content);
+        showToast('Skopiowano do schowka!', 'success');
+    }
+}
+
+function exportToMarkdown() {
+    if (!lastResult) return;
+    let md = `# 🏛️ Narada Rady AI\n\n**Zapytanie:** ${lastResult.query}\n**Data:** ${lastResult.timestamp}\n\n---\n\n## 👥 Perspektywy agentów\n\n`;
+    for (const r of lastResult.agent_responses) {
+        md += `### ${r.agent_name}\n*${r.role}*\n\n${r.content}\n\n---\n\n`;
+    }
+    if (lastResult.synthesis) md += `## 🔮 Końcowa synteza\n\n${lastResult.synthesis.content}`;
+    const blob = new Blob([md], { type: 'text/markdown' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `council_${new Date().toISOString().slice(0, 10)}.md`;
+    a.click();
+    showToast('Wyeksportowano do Markdown', 'success');
+}
+
+function generatePlan() {
+    queryInput.value = 'Na podstawie powyższej rekomendacji, wygeneruj szczegółowy plan implementacji z konkretnymi krokami, terminami i odpowiedzialnymi osobami.';
+    queryInput.focus();
+    showToast('Wpisano pytanie o plan', 'info');
+}
+
+// ========== SESSION MANAGEMENT ==========
+function loadSessions() {
+    const saved = localStorage.getItem('ai_council_sessions');
+    if (saved) sessions = JSON.parse(saved);
+    renderSessions();
+}
+
+function saveCurrentSession(query) {
+    const session = {
+        id: Date.now(),
+        title: query.slice(0, 50) + (query.length > 50 ? '...' : ''),
+        timestamp: new Date().toISOString(),
+        history: [...history],
+        lastResult: lastResult
+    };
+    sessions.unshift(session);
+    sessions = sessions.slice(0, 20);
+    localStorage.setItem('ai_council_sessions', JSON.stringify(sessions));
+    currentSessionId = session.id;
+    renderSessions();
+}
+
+function renderSessions() {
+    if (!recentSessionsList) return;
+    if (sessions.length === 0) {
+        recentSessionsList.innerHTML = '<p class="px-3 text-xs text-text-secondary/50 italic">Brak zapisanych sesji</p>';
+        return;
+    }
+    recentSessionsList.innerHTML = sessions.slice(0, 5).map(session => `
+        <a href="#" onclick="loadSession(${session.id}); return false;" class="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-text-secondary hover:bg-white/5 truncate ${session.id === currentSessionId ? 'bg-primary/10' : ''}">
+            <span class="material-symbols-outlined text-[16px] shrink-0 opacity-70">chat_bubble_outline</span>
+            <span class="truncate">${escapeHtml(session.title)}</span>
+        </a>
+    `).join('');
+}
+
+function loadSession(sessionId) {
+    const session = sessions.find(s => s.id === sessionId);
+    if (session) {
+        history = session.history || [];
+        lastResult = session.lastResult;
+        currentSessionId = sessionId;
+        navigateTo('dashboard');
+        if (lastResult) {
+            renderResults(lastResult);
+            queryDisplay.classList.remove('hidden');
+            queryText.textContent = session.history[session.history.length - 1]?.query || '';
+        }
+        renderSessions();
+        showToast('Załadowano sesję', 'info');
+    }
+}
+
+function resetSession() {
+    history = [];
+    lastResult = null;
+    currentSessionId = null;
+    totalTokensUsed = 0;
+    estimatedCost = 0;
+    updateStatDisplay();
+    showWelcome();
+}
+
+// ========== STATS & UTILS ==========
+async function loadStats() {
+    try {
+        const response = await fetch('/api/stats');
+        const stats = await response.json();
+        document.getElementById('kb-vectors').textContent = `${(stats.total_vectors || 0).toLocaleString()} chunków`;
+    } catch (err) {
+        document.getElementById('kb-vectors').textContent = 'Niedostępna';
+    }
+}
+
+function updateStatDisplay() {
+    const providerEl = document.getElementById('stat-provider');
+    const tokensEl = document.getElementById('stat-tokens');
+    const costEl = document.getElementById('stat-cost');
+    if (providerEl) providerEl.textContent = currentProvider.charAt(0).toUpperCase() + currentProvider.slice(1);
+    if (tokensEl) tokensEl.textContent = totalTokensUsed.toLocaleString();
+    if (costEl) costEl.textContent = `$${estimatedCost.toFixed(4)}`;
+}
+
+function estimateTokens(query, result) {
+    let chars = query.length;
+    if (result.agent_responses) result.agent_responses.forEach(r => chars += r.content.length);
+    if (result.synthesis) chars += result.synthesis.content.length;
+    return Math.ceil(chars / 4);
+}
+
+function updateContextFiles(filename) {
+    const el = document.getElementById('context-files');
+    if (el) {
+        el.innerHTML = `<div class="flex items-center gap-2 text-sm text-gray-300 p-2 hover:bg-white/5 rounded cursor-pointer">
+            <span class="material-symbols-outlined text-blue-400 text-[18px]">description</span>
+            <span class="truncate">${escapeHtml(filename)}</span>
+        </div>`;
+    }
+}
+
+function formatDate(isoString) {
+    const date = new Date(isoString);
+    return date.toLocaleDateString('pl-PL', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+function showToast(message, type = 'info') {
+    document.querySelectorAll('.toast').forEach(t => t.remove());
+    const colors = { success: 'bg-green-500', error: 'bg-red-500', info: 'bg-primary' };
+    const toast = document.createElement('div');
+    toast.className = `toast fixed bottom-24 left-1/2 transform -translate-x-1/2 ${colors[type]} text-white px-4 py-2 rounded-lg shadow-lg z-50 transition-opacity duration-300`;
+    toast.textContent = message;
+    document.body.appendChild(toast);
+    setTimeout(() => { toast.style.opacity = '0'; setTimeout(() => toast.remove(), 300); }, 3000);
+}
+
+// ========== AGENT BUILDER ==========
+let customAgents = [];
+let promptTemplates = [];
+let currentEditingAgentId = null;
+
+async function loadCustomAgents() {
+    try {
+        const response = await fetch('/api/agents/custom');
+        customAgents = await response.json();
+        renderCustomAgentsList();
+    } catch (error) {
+        console.error('Error loading custom agents:', error);
+    }
+}
+
+async function loadPromptTemplates() {
+    try {
+        const response = await fetch('/api/agents/templates');
+        promptTemplates = await response.json();
+        renderTemplateOptions();
+    } catch (error) {
+        console.error('Error loading templates:', error);
+    }
+}
+
+function renderCustomAgentsList() {
+    const container = document.getElementById('custom-agents-list');
+    if (!container) return;
+
+    if (customAgents.length === 0) {
+        container.innerHTML = `
+            <div class="text-center py-8 text-text-secondary text-sm">
+                <span class="material-symbols-outlined text-4xl mb-2 block opacity-30">robot_2</span>
+                Brak custom agentów.<br>Kliknij "Nowy Agent" aby utworzyć.
+            </div>
+        `;
+        return;
+    }
+
+    container.innerHTML = customAgents.map(agent => `
+        <div class="agent-list-item p-3 rounded-lg cursor-pointer transition-all hover:bg-white/5 border border-transparent ${currentEditingAgentId === agent.id ? 'active' : ''}"
+            onclick="editAgent('${agent.id}')">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center text-lg">
+                    ${agent.emoji}
+                </div>
+                <div class="flex-1 min-w-0">
+                    <h4 class="font-medium text-sm truncate">${escapeHtml(agent.name)}</h4>
+                    <p class="text-xs text-text-secondary truncate">${escapeHtml(agent.role)}</p>
+                </div>
+                <div class="w-2 h-2 rounded-full ${agent.enabled ? 'bg-green-500' : 'bg-gray-500'}"></div>
+            </div>
+        </div>
+    `).join('');
+}
+
+function renderTemplateOptions() {
+    const select = document.getElementById('agent-template');
+    if (!select || promptTemplates.length === 0) return;
+
+    select.innerHTML = '<option value="">-- Wybierz szablon --</option>' +
+        promptTemplates.map(t => `<option value="${t.id}">${t.emoji} ${t.name}</option>`).join('');
+}
+
+function openNewAgentEditor() {
+    currentEditingAgentId = null;
+
+    // Show form
+    document.getElementById('editor-placeholder')?.classList.add('hidden');
+    document.getElementById('agent-form')?.classList.remove('hidden');
+    document.getElementById('editor-actions')?.classList.add('hidden');
+
+    // Clear form
+    document.getElementById('agent-id').value = '';
+    document.getElementById('agent-name').value = '';
+    document.getElementById('agent-emoji').value = '🤖';
+    document.getElementById('agent-role').value = '';
+    document.getElementById('agent-persona').value = '';
+    document.getElementById('agent-system-prompt').value = '';
+    document.getElementById('agent-template').value = '';
+    document.getElementById('agent-context-limit').value = '5000';
+    document.getElementById('agent-memory-type').value = 'session';
+    document.getElementById('agent-enabled').checked = true;
+
+    // Clear tool checkboxes
+    document.querySelectorAll('input[name="tools"]').forEach(cb => cb.checked = false);
+
+    renderCustomAgentsList();
+}
+
+async function editAgent(agentId) {
+    currentEditingAgentId = agentId;
+
+    try {
+        const response = await fetch(`/api/agents/custom/${agentId}`);
+        if (!response.ok) throw new Error('Agent not found');
+        const agent = await response.json();
+
+        // Show form
+        document.getElementById('editor-placeholder')?.classList.add('hidden');
+        document.getElementById('agent-form')?.classList.remove('hidden');
+        document.getElementById('editor-actions')?.classList.remove('hidden');
+
+        // Fill form
+        document.getElementById('agent-id').value = agent.id;
+        document.getElementById('agent-name').value = agent.name;
+        document.getElementById('agent-emoji').value = agent.emoji;
+        document.getElementById('agent-role').value = agent.role;
+        document.getElementById('agent-persona').value = agent.persona;
+        document.getElementById('agent-system-prompt').value = agent.system_prompt;
+        document.getElementById('agent-template').value = agent.template_id || '';
+        document.getElementById('agent-context-limit').value = agent.context_limit;
+        document.getElementById('agent-memory-type').value = agent.memory_type;
+        document.getElementById('agent-enabled').checked = agent.enabled;
+
+        // Set tool checkboxes
+        document.querySelectorAll('input[name="tools"]').forEach(cb => {
+            cb.checked = agent.tools?.includes(cb.value) || false;
+        });
+
+        renderCustomAgentsList();
+    } catch (error) {
+        showToast('Błąd wczytywania agenta', 'error');
+        console.error(error);
+    }
+}
+
+async function loadTemplate(templateId) {
+    if (!templateId) return;
+
+    try {
+        const response = await fetch(`/api/agents/templates/${templateId}`);
+        const template = await response.json();
+
+        document.getElementById('agent-persona').value = template.persona || '';
+        document.getElementById('agent-system-prompt').value = template.system_prompt || '';
+
+        // Suggest name if empty
+        if (!document.getElementById('agent-name').value) {
+            document.getElementById('agent-name').value = template.name || '';
+            document.getElementById('agent-emoji').value = template.emoji || '🤖';
+        }
+
+        showToast('Szablon wczytany', 'success');
+    } catch (error) {
+        console.error('Error loading template:', error);
+    }
+}
+
+async function saveAgent(e) {
+    e.preventDefault();
+
+    const agentId = document.getElementById('agent-id').value;
+    const tools = [];
+    document.querySelectorAll('input[name="tools"]:checked').forEach(cb => tools.push(cb.value));
+
+    const agentData = {
+        name: document.getElementById('agent-name').value,
+        emoji: document.getElementById('agent-emoji').value || '🤖',
+        role: document.getElementById('agent-role').value,
+        persona: document.getElementById('agent-persona').value,
+        system_prompt: document.getElementById('agent-system-prompt').value,
+        template_id: document.getElementById('agent-template').value || null,
+        tools: tools,
+        context_limit: parseInt(document.getElementById('agent-context-limit').value) || 5000,
+        memory_type: document.getElementById('agent-memory-type').value,
+        enabled: document.getElementById('agent-enabled').checked
+    };
+
+    try {
+        let response;
+        if (agentId) {
+            // Update
+            response = await fetch(`/api/agents/custom/${agentId}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(agentData)
+            });
+        } else {
+            // Create
+            response = await fetch('/api/agents/custom', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(agentData)
+            });
+        }
+
+        if (!response.ok) throw new Error('Failed to save agent');
+
+        const result = await response.json();
+        currentEditingAgentId = result.agent?.id || result.id;
+
+        showToast(agentId ? 'Agent zaktualizowany' : 'Agent utworzony', 'success');
+        await loadCustomAgents();
+
+        // Update agent-id for further edits
+        document.getElementById('agent-id').value = currentEditingAgentId;
+        document.getElementById('editor-actions')?.classList.remove('hidden');
+
+    } catch (error) {
+        showToast('Błąd zapisywania agenta', 'error');
+        console.error(error);
+    }
+}
+
+async function deleteCurrentAgent() {
+    if (!currentEditingAgentId) return;
+
+    if (!confirm('Czy na pewno chcesz usunąć tego agenta?')) return;
+
+    try {
+        const response = await fetch(`/api/agents/custom/${currentEditingAgentId}`, {
+            method: 'DELETE'
+        });
+
+        if (!response.ok) throw new Error('Failed to delete agent');
+
+        showToast('Agent usunięty', 'success');
+        currentEditingAgentId = null;
+        cancelAgentEdit();
+        await loadCustomAgents();
+    } catch (error) {
+        showToast('Błąd usuwania agenta', 'error');
+        console.error(error);
+    }
+}
+
+function cancelAgentEdit() {
+    currentEditingAgentId = null;
+    document.getElementById('editor-placeholder')?.classList.remove('hidden');
+    document.getElementById('agent-form')?.classList.add('hidden');
+    document.getElementById('editor-actions')?.classList.add('hidden');
+    renderCustomAgentsList();
+}
+
+async function testCurrentAgent() {
+    const testQuery = prompt('Wpisz pytanie testowe dla agenta:', 'Jak mogę Ci pomóc?');
+    if (!testQuery) return;
+
+    const tools = [];
+    document.querySelectorAll('input[name="tools"]:checked').forEach(cb => tools.push(cb.value));
+
+    const config = {
+        name: document.getElementById('agent-name').value,
+        emoji: document.getElementById('agent-emoji').value || '🤖',
+        role: document.getElementById('agent-role').value,
+        persona: document.getElementById('agent-persona').value,
+        system_prompt: document.getElementById('agent-system-prompt').value,
+        tools: tools,
+        context_limit: parseInt(document.getElementById('agent-context-limit').value) || 5000
+    };
+
+    showToast('Testowanie agenta...', 'info');
+
+    try {
+        const response = await fetch('/api/agents/test', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                config: config,
+                query: testQuery,
+                provider: currentProvider,
+                model: currentModel
+            })
+        });
+
+        if (!response.ok) throw new Error('Test failed');
+
+        const result = await response.json();
+
+        // Show result in modal or alert
+        alert(`${result.agent_name}\n\n${result.content}`);
+        showToast('Test zakończony', 'success');
+    } catch (error) {
+        showToast('Błąd testu agenta', 'error');
+        console.error(error);
+    }
+}
+
+// Initialize Agent Builder on page load
+function initAgentBuilder() {
+    loadCustomAgents();
+    loadPromptTemplates();
+
+    // Attach form submit handler
+    const form = document.getElementById('agent-form');
+    if (form) {
+        form.addEventListener('submit', saveAgent);
+    }
+}
+
+// Add to page navigation
+const originalNavigateTo = window.navigateTo || function () { };
+window.navigateTo = function (page) {
+    originalNavigateTo(page);
+    if (page === 'agent-builder') {
+        initAgentBuilder();
+    }
+    if (page === 'plugins') {
+        initPluginsPage();
+    }
+};
+
+// ========== PLUGINS PAGE ==========
+let pluginsList = [];
+
+async function initPluginsPage() {
+    await loadPluginsList();
+}
+
+async function loadPluginsList() {
+    try {
+        const response = await fetch('/api/plugins');
+        pluginsList = await response.json();
+        renderPluginsList();
+    } catch (error) {
+        console.error('Error loading plugins:', error);
+    }
+}
+
+function renderPluginsList() {
+    const container = document.getElementById('plugins-list');
+    if (!container || pluginsList.length === 0) return;
+
+    container.innerHTML = pluginsList.map(plugin => `
+        <div class="plugin-card p-4 bg-white/5 rounded-lg border border-white/10">
+            <div class="flex items-center gap-3 mb-2">
+                <span class="text-2xl">${plugin.icon}</span>
+                <div>
+                    <h4 class="font-medium text-sm">${escapeHtml(plugin.name)}</h4>
+                    <p class="text-xs text-text-secondary">${plugin.category}</p>
+                </div>
+                <div class="ml-auto w-2 h-2 rounded-full ${plugin.is_configured ? 'bg-green-500' : 'bg-orange-500'}"></div>
+            </div>
+            <p class="text-xs text-text-secondary mb-2">${escapeHtml(plugin.description)}</p>
+            <div class="text-xs">
+                ${plugin.is_configured
+            ? '<span class="text-green-400">✓ Skonfigurowany</span>'
+            : plugin.requires_api_key
+                ? '<span class="text-orange-400">⚠ Wymaga API key</span>'
+                : '<span class="text-green-400">✓ Gotowy</span>'
+        }
+            </div>
+        </div>
+    `).join('');
+}
+
+async function executeWebSearch(e) {
+    e.preventDefault();
+
+    const query = document.getElementById('search-query').value;
+    const useTavily = document.getElementById('use-tavily').checked;
+
+    showToast('Wyszukiwanie...', 'info');
+
+    try {
+        const response = await fetch('/api/plugins/web-search', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query, use_tavily: useTavily, max_results: 5 })
+        });
+
+        const result = await response.json();
+
+        if (!result.success) {
+            showToast('Błąd: ' + result.error, 'error');
+            return;
+        }
+
+        // Show results
+        const resultsContainer = document.getElementById('search-results');
+        const answerDiv = document.getElementById('search-answer');
+        const itemsDiv = document.getElementById('search-items');
+
+        resultsContainer.classList.remove('hidden');
+
+        // AI Answer (Tavily)
+        if (result.data.answer) {
+            answerDiv.classList.remove('hidden');
+            answerDiv.innerHTML = `<strong>🤖 AI Answer:</strong><br>${escapeHtml(result.data.answer)}`;
+        } else {
+            answerDiv.classList.add('hidden');
+        }
+
+        // Search results
+        itemsDiv.innerHTML = result.data.results.map(item => `
+            <div class="p-3 bg-white/5 rounded-lg">
+                <a href="${item.url}" target="_blank" class="text-primary hover:underline font-medium text-sm">${escapeHtml(item.title)}</a>
+                <p class="text-xs text-text-secondary mt-1">${escapeHtml(item.snippet)}</p>
+                <p class="text-xs text-text-secondary/50 mt-1 truncate">${item.url}</p>
+            </div>
+        `).join('');
+
+        showToast(`Znaleziono ${result.data.total} wyników`, 'success');
+    } catch (error) {
+        showToast('Błąd wyszukiwania', 'error');
+        console.error(error);
+    }
+}
+
+async function executeUrlAnalysis(e) {
+    e.preventDefault();
+
+    const url = document.getElementById('analyze-url').value;
+    const extractLinks = document.getElementById('extract-links').checked;
+    const summarize = document.getElementById('summarize-content').checked;
+
+    showToast('Analizowanie strony...', 'info');
+
+    try {
+        const response = await fetch('/api/plugins/analyze-url', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url, extract_links: extractLinks, summarize })
+        });
+
+        const result = await response.json();
+
+        if (!result.success) {
+            showToast('Błąd: ' + result.error, 'error');
+            return;
+        }
+
+        // Show results
+        const resultsContainer = document.getElementById('url-results');
+        resultsContainer.classList.remove('hidden');
+
+        document.getElementById('url-title').textContent = result.data.title || '(Brak tytułu)';
+        document.getElementById('url-description').textContent = result.data.description || '';
+        document.getElementById('url-content').textContent = result.data.content?.substring(0, 2000) + (result.data.truncated ? '...' : '');
+
+        // Summary
+        const summaryDiv = document.getElementById('url-summary');
+        if (result.data.summary) {
+            summaryDiv.classList.remove('hidden');
+            summaryDiv.innerHTML = `<strong>📝 Podsumowanie AI:</strong><br>${escapeHtml(result.data.summary)}`;
+        } else {
+            summaryDiv.classList.add('hidden');
+        }
+
+        showToast('Analiza zakończona', 'success');
+    } catch (error) {
+        showToast('Błąd analizy URL', 'error');
+        console.error(error);
+    }
+}

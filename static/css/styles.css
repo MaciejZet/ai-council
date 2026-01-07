@@ -1,0 +1,386 @@
+/* AI Council - Custom Styles */
+
+/* Tab styles */
+.tab-content {
+    display: none;
+}
+
+.tab-content.active {
+    display: block;
+}
+
+.tab-button.active {
+    background-color: rgba(59, 25, 230, 0.1);
+    color: white;
+    border-color: rgba(59, 25, 230, 0.2);
+}
+
+.agent-list-item.active {
+    box-shadow: 0 0 0 2px #3b19e6;
+    background-color: rgba(59, 25, 230, 0.1);
+    border-color: rgba(59, 25, 230, 0.2);
+}
+
+/* Agent cards */
+.agent-card {
+    background: linear-gradient(135deg, #1e1b29 0%, #252233 100%);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 16px;
+    padding: 1.5rem;
+    margin-bottom: 1rem;
+}
+
+.agent-card-header {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+    padding-bottom: 0.75rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.agent-avatar {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.25rem;
+}
+
+.agent-avatar.strategist {
+    background-color: rgba(59, 130, 246, 0.2);
+    color: #3b82f6;
+}
+
+.agent-avatar.analyst {
+    background-color: rgba(34, 197, 94, 0.2);
+    color: #22c55e;
+}
+
+.agent-avatar.practitioner {
+    background-color: rgba(249, 115, 22, 0.2);
+    color: #f97316;
+}
+
+.agent-avatar.expert {
+    background-color: rgba(168, 85, 247, 0.2);
+    color: #a855f7;
+}
+
+.agent-avatar.synthesizer {
+    background-color: rgba(236, 72, 153, 0.2);
+    color: #ec4899;
+}
+
+/* Synthesis card with glow */
+.synthesis-card {
+    position: relative;
+}
+
+.synthesis-card::before {
+    content: '';
+    position: absolute;
+    inset: -2px;
+    background: linear-gradient(135deg, #3b19e6, #9333ea);
+    border-radius: 18px;
+    opacity: 0.3;
+    filter: blur(8px);
+    z-index: -1;
+}
+
+.synthesis-card-inner {
+    background: linear-gradient(135deg, #1e1b29 0%, #121118 100%);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 16px;
+    padding: 1.5rem;
+}
+
+/* Source badges */
+.source-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    background: #1a1a1a;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 20px;
+    padding: 0.4rem 0.8rem;
+    margin: 0.25rem;
+    font-size: 0.8rem;
+    color: #a29db8;
+    transition: all 0.2s;
+}
+
+.source-badge:hover {
+    border-color: rgba(255, 255, 255, 0.2);
+    color: white;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+    width: 6px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.2);
+}
+
+/* Loading animation */
+@keyframes pulse-glow {
+
+    0%,
+    100% {
+        opacity: 0.3;
+    }
+
+    50% {
+        opacity: 0.6;
+    }
+}
+
+.loading-glow {
+    animation: pulse-glow 2s ease-in-out infinite;
+}
+
+/* Textarea auto-resize */
+#query-input {
+    overflow-y: hidden;
+}
+
+/* Mobile menu */
+@media (max-width: 768px) {
+    .mobile-hidden {
+        display: none;
+    }
+}
+
+/* Agent content formatting */
+.agent-content {
+    color: #c0c0c0;
+    line-height: 1.7;
+    font-size: 0.95rem;
+}
+
+.agent-content h1,
+.agent-content h2,
+.agent-content h3 {
+    color: white;
+    font-weight: 600;
+    margin-top: 1rem;
+    margin-bottom: 0.5rem;
+}
+
+.agent-content strong {
+    color: white;
+}
+
+.agent-content ul,
+.agent-content ol {
+    margin-left: 1.5rem;
+    margin-top: 0.5rem;
+    margin-bottom: 0.5rem;
+}
+
+.agent-content li {
+    margin-bottom: 0.25rem;
+}
+
+/* Impact bars */
+.impact-bar {
+    height: 6px;
+    border-radius: 3px;
+    background: rgba(255, 255, 255, 0.1);
+    overflow: hidden;
+}
+
+.impact-bar-fill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 0.5s ease;
+}
+
+/* Tab button hover */
+.tab-button {
+    transition: all 0.2s;
+}
+
+.tab-button:hover {
+    background-color: rgba(59, 25, 230, 0.05);
+}
+
+/* ========== STREAMING STYLES ========== */
+
+/* Typing cursor animation */
+.typing-cursor {
+    display: inline-block;
+    width: 2px;
+    height: 1.1em;
+    background: #3b19e6;
+    margin-left: 2px;
+    vertical-align: text-bottom;
+    animation: blink 0.8s infinite;
+}
+
+@keyframes blink {
+
+    0%,
+    50% {
+        opacity: 1;
+    }
+
+    51%,
+    100% {
+        opacity: 0;
+    }
+}
+
+/* Typing indicator dots */
+.typing-indicator {
+    display: inline-flex;
+    gap: 2px;
+}
+
+.typing-indicator::before,
+.typing-indicator::after {
+    content: '';
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: currentColor;
+    animation: typing-dot 1.4s infinite ease-in-out;
+}
+
+.typing-indicator::before {
+    animation-delay: 0s;
+}
+
+.typing-indicator::after {
+    animation-delay: 0.2s;
+}
+
+@keyframes typing-dot {
+
+    0%,
+    80%,
+    100% {
+        transform: scale(0.6);
+        opacity: 0.4;
+    }
+
+    40% {
+        transform: scale(1);
+        opacity: 1;
+    }
+}
+
+/* Streaming content area */
+.streaming-content {
+    min-height: 100px;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+}
+
+/* Streaming badge pulse */
+.streaming-badge .animate-pulse {
+    animation: pulse 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes pulse {
+
+    0%,
+    100% {
+        opacity: 1;
+    }
+
+    50% {
+        opacity: 0.5;
+    }
+}
+
+/* Smooth transition for content */
+.agent-content {
+    transition: height 0.1s ease-out;
+}
+
+/* ========== MODE TOGGLE ========== */
+.mode-btn {
+    background: rgba(255, 255, 255, 0.05);
+    color: #a29db8;
+    border: 1px solid transparent;
+}
+
+.mode-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: white;
+}
+
+.mode-btn.active {
+    background: rgba(59, 25, 230, 0.2);
+    color: #9b8cff;
+    border-color: rgba(59, 25, 230, 0.3);
+}
+
+/* ========== DEBATE STYLES ========== */
+.debate-container {
+    max-width: 100%;
+}
+
+.debate-round {
+    background: linear-gradient(135deg, rgba(30, 27, 41, 0.5) 0%, rgba(37, 34, 51, 0.5) 100%);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 16px;
+    padding: 1.5rem;
+}
+
+.round-header h4 {
+    font-size: 1rem;
+}
+
+.round-responses {
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+}
+
+.debate-response {
+    position: relative;
+}
+
+.debate-response .reacting-to {
+    background: rgba(59, 25, 230, 0.1);
+    border-radius: 8px;
+    padding: 0.5rem 0.75rem;
+    margin-bottom: 0.75rem;
+}
+
+/* Consensus panel */
+.consensus-summary {
+    animation: fadeIn 0.3s ease-out;
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.consensus-box ul,
+.disagreement-box ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}

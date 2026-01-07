@@ -1,0 +1,920 @@
+<!DOCTYPE html>
+<html class="dark" lang="pl">
+
+<head>
+    <meta charset="utf-8" />
+    <meta content="width=device-width, initial-scale=1.0" name="viewport" />
+    <title>AI Council Dashboard</title>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Noto+Sans:wght@300;400;500;600;700&display=swap"
+        rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap"
+        rel="stylesheet" />
+    <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+    <script>
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#3b19e6",
+                        "primary-hover": "#2f14b8",
+                        "background-light": "#f6f6f8",
+                        "background-dark": "#141121",
+                        "surface-dark": "#1e1b29",
+                        "surface-darker": "#121118",
+                        "text-secondary": "#a29db8",
+                    },
+                    fontFamily: {
+                        "display": ["Space Grotesk", "sans-serif"],
+                        "body": ["Noto Sans", "sans-serif"],
+                    },
+                },
+            },
+        }
+    </script>
+    <link rel="stylesheet" href="/static/css/styles.css">
+</head>
+
+<body
+    class="bg-background-light dark:bg-background-dark text-slate-900 dark:text-white font-display overflow-hidden h-screen flex">
+
+    <!-- LEFT SIDEBAR -->
+    <aside
+        class="w-64 bg-white dark:bg-surface-darker border-r border-gray-200 dark:border-white/10 flex flex-col justify-between hidden md:flex shrink-0">
+        <div class="flex flex-col h-full">
+            <!-- Logo -->
+            <div class="p-6 flex items-center gap-3">
+                <div
+                    class="w-8 h-8 rounded-lg bg-gradient-to-br from-primary to-purple-600 flex items-center justify-center text-white">
+                    <span class="material-symbols-outlined text-lg">psychology</span>
+                </div>
+                <h1 class="text-xl font-bold tracking-tight">AI Council</h1>
+            </div>
+
+            <!-- New Session Button -->
+            <div class="px-4 mb-6">
+                <button onclick="resetSession(); navigateTo('dashboard')"
+                    class="w-full flex items-center justify-center gap-2 bg-primary hover:bg-primary-hover text-white py-3 px-4 rounded-lg font-medium transition-colors shadow-lg shadow-primary/20 group">
+                    <span
+                        class="material-symbols-outlined text-[20px] group-hover:rotate-90 transition-transform">add</span>
+                    <span>Nowa sesja</span>
+                </button>
+            </div>
+
+            <!-- Navigation -->
+            <nav class="flex-1 px-3 space-y-1 overflow-y-auto">
+                <p class="px-3 text-xs font-semibold text-text-secondary uppercase tracking-wider mb-2 mt-2">Menu</p>
+                <a onclick="navigateTo('dashboard')"
+                    class="nav-link flex items-center gap-3 px-3 py-2.5 rounded-lg cursor-pointer transition-colors"
+                    data-page="dashboard">
+                    <span class="material-symbols-outlined">dashboard</span>
+                    Dashboard
+                </a>
+                <a onclick="navigateTo('history')"
+                    class="nav-link flex items-center gap-3 px-3 py-2.5 rounded-lg cursor-pointer transition-colors"
+                    data-page="history">
+                    <span class="material-symbols-outlined">history</span>
+                    Historia
+                </a>
+                <a onclick="navigateTo('agents')"
+                    class="nav-link flex items-center gap-3 px-3 py-2.5 rounded-lg cursor-pointer transition-colors"
+                    data-page="agents">
+                    <span class="material-symbols-outlined">group</span>
+                    Konfiguracja agentów
+                </a>
+                <a onclick="navigateTo('agent-builder')"
+                    class="nav-link flex items-center gap-3 px-3 py-2.5 rounded-lg cursor-pointer transition-colors"
+                    data-page="agent-builder">
+                    <span class="material-symbols-outlined">build</span>
+                    Kreator agentów
+                </a>
+                <a onclick="navigateTo('settings')"
+                    class="nav-link flex items-center gap-3 px-3 py-2.5 rounded-lg cursor-pointer transition-colors"
+                    data-page="settings">
+                    <span class="material-symbols-outlined">settings</span>
+                    Ustawienia
+                </a>
+                <a onclick="navigateTo('plugins')"
+                    class="nav-link flex items-center gap-3 px-3 py-2.5 rounded-lg cursor-pointer transition-colors"
+                    data-page="plugins">
+                    <span class="material-symbols-outlined">extension</span>
+                    Wtyczki
+                </a>
+
+                <!-- Knowledge Base -->
+                <p class="px-3 text-xs font-semibold text-text-secondary uppercase tracking-wider mb-2 mt-6">Baza wiedzy
+                </p>
+                <div id="kb-stats" class="px-3 py-2 text-sm text-text-secondary">
+                    <span class="material-symbols-outlined text-[16px] align-middle">database</span>
+                    <span id="kb-vectors">Ładowanie...</span>
+                </div>
+                <button id="pdf-import-btn"
+                    class="w-full flex items-center gap-2 px-3 py-2 text-sm text-text-secondary hover:bg-slate-100 dark:hover:bg-white/5 rounded-lg transition-colors">
+                    <span class="material-symbols-outlined text-[18px]">upload_file</span>
+                    <span>Import PDF do bazy</span>
+                </button>
+                <input type="file" id="pdf-import-input" accept=".pdf" class="hidden">
+
+                <!-- Recent Sessions -->
+                <p class="px-3 text-xs font-semibold text-text-secondary uppercase tracking-wider mb-2 mt-6">Ostatnie
+                    sesje</p>
+                <div id="recent-sessions" class="space-y-0.5">
+                    <p class="px-3 text-xs text-text-secondary/50 italic">Brak zapisanych sesji</p>
+                </div>
+            </nav>
+
+            <!-- User Profile -->
+            <div class="p-4 border-t border-gray-200 dark:border-white/10">
+                <div class="flex items-center gap-3 p-2">
+                    <div
+                        class="w-8 h-8 rounded-full bg-gradient-to-br from-primary to-purple-500 flex items-center justify-center text-white text-sm font-bold">
+                        U</div>
+                    <div class="text-left flex-1 min-w-0">
+                        <p class="text-sm font-medium text-slate-900 dark:text-white truncate">Użytkownik</p>
+                        <p class="text-xs text-text-secondary truncate">AI Council v2.0</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </aside>
+
+    <!-- MAIN CONTENT -->
+    <main class="flex-1 flex flex-col h-full relative overflow-hidden bg-background-light dark:bg-background-dark">
+
+        <!-- ========== DASHBOARD PAGE ========== -->
+        <div id="page-dashboard" class="page-content flex flex-col h-full">
+            <!-- Header -->
+            <header
+                class="h-16 border-b border-gray-200 dark:border-white/10 flex items-center justify-between px-6 shrink-0 bg-white/50 dark:bg-surface-darker/50 backdrop-blur-md sticky top-0 z-10">
+                <div class="flex items-center gap-4">
+                    <button class="md:hidden text-text-secondary hover:text-white" onclick="toggleMobileMenu()">
+                        <span class="material-symbols-outlined">menu</span>
+                    </button>
+                    <div>
+                        <h2 class="text-lg font-bold leading-tight" id="main-title">Narada Rady AI</h2>
+                        <p class="text-xs text-text-secondary flex items-center gap-1">
+                            <span class="w-2 h-2 rounded-full bg-green-500"></span>
+                            <span id="agents-status">Aktywna • 5 Agentów</span>
+                        </p>
+                    </div>
+                </div>
+                <!-- Mode Toggle -->
+                <div class="flex items-center gap-2 mr-auto ml-6">
+                    <button id="mode-council" onclick="toggleDebateMode()"
+                        class="mode-btn active flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-all">
+                        <span>🏛️</span>
+                        <span class="hidden sm:inline">Narada</span>
+                    </button>
+                    <button id="mode-debate" onclick="toggleDebateMode()"
+                        class="mode-btn flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-all">
+                        <span>⚔️</span>
+                        <span class="hidden sm:inline">Debata</span>
+                    </button>
+                </div>
+                <div class="flex items-center gap-3">
+                    <select id="provider-select"
+                        class="bg-white dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-lg px-3 py-1.5 text-sm">
+                        <option value="openai">OpenAI</option>
+                        <option value="grok">Grok</option>
+                        <option value="gemini">Gemini</option>
+                    </select>
+                    <select id="model-select"
+                        class="bg-white dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-lg px-3 py-1.5 text-sm">
+                        <option value="gpt-4o">GPT-4o</option>
+                    </select>
+                </div>
+            </header>
+
+            <!-- Results Area (scrollable container with query + results) -->
+            <div id="results-area" class="flex-1 flex flex-col overflow-y-auto pb-32">
+
+                <!-- Query Display (inside scroll area) -->
+                <div id="query-display" class="hidden px-4 sm:px-8 py-6 max-w-4xl mx-auto w-full shrink-0">
+                    <div class="flex flex-col items-end w-full">
+                        <div class="flex items-end gap-3 max-w-[85%]">
+                            <div class="bg-primary text-white p-4 rounded-2xl rounded-tr-sm shadow-lg">
+                                <p id="query-text" class="text-base leading-relaxed font-body"></p>
+                            </div>
+                            <div
+                                class="w-8 h-8 rounded-full bg-gradient-to-br from-primary to-purple-500 flex items-center justify-center text-white text-sm font-bold mb-1">
+                                U</div>
+                        </div>
+                        <span class="text-xs text-text-secondary mt-2 pr-12">Teraz</span>
+                    </div>
+                </div>
+
+                <!-- Welcome state -->
+                <div id="welcome-state" class="flex-1 flex items-center justify-center">
+                    <div class="text-center px-4 max-w-xl">
+                        <div
+                            class="w-16 h-16 rounded-2xl bg-gradient-to-br from-primary to-purple-600 flex items-center justify-center text-white mx-auto mb-6">
+                            <span class="material-symbols-outlined text-3xl">psychology</span>
+                        </div>
+                        <h2 class="text-2xl font-bold mb-2">Witaj w AI Council</h2>
+                        <p class="text-text-secondary mb-6">Wieloagentowa rada AI analizuje Twoje pytanie z 5 różnych
+                            perspektyw.</p>
+                        <div class="flex flex-wrap justify-center gap-2">
+                            <span class="px-3 py-1 bg-blue-500/10 text-blue-400 rounded-full text-sm">🎯 Strateg</span>
+                            <span class="px-3 py-1 bg-green-500/10 text-green-400 rounded-full text-sm">📊
+                                Analityk</span>
+                            <span class="px-3 py-1 bg-orange-500/10 text-orange-400 rounded-full text-sm">🔧
+                                Praktyk</span>
+                            <span class="px-3 py-1 bg-purple-500/10 text-purple-400 rounded-full text-sm">🎓
+                                Ekspert</span>
+                            <span class="px-3 py-1 bg-pink-500/10 text-pink-400 rounded-full text-sm">🔮
+                                Syntezator</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Loading state -->
+                <div id="loading-state" class="hidden flex-1 flex items-center justify-center">
+                    <div class="text-center">
+                        <div
+                            class="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4">
+                        </div>
+                        <p class="text-text-secondary">Rada deliberuje...</p>
+                    </div>
+                </div>
+
+                <!-- Results content -->
+                <div id="results-content" class="hidden px-4 sm:px-8 max-w-4xl mx-auto w-full pb-8">
+                    <div class="flex flex-wrap gap-2 mb-6 border-b border-gray-200 dark:border-white/10"
+                        id="agent-tabs"></div>
+                    <div id="tab-contents" class="flex-1 pb-6"></div>
+                </div>
+            </div>
+
+            <!-- Input Area -->
+            <div
+                class="absolute bottom-0 left-0 w-full p-4 bg-gradient-to-t from-background-light via-background-light to-transparent dark:from-background-dark dark:via-background-dark dark:to-transparent pt-10">
+                <div class="max-w-4xl mx-auto">
+                    <form id="query-form" class="relative group/input">
+                        <div
+                            class="absolute -inset-0.5 bg-gradient-to-r from-primary/50 to-purple-600/50 rounded-2xl opacity-0 group-focus-within/input:opacity-100 transition duration-500 blur-md">
+                        </div>
+                        <div
+                            class="relative bg-white dark:bg-surface-darker rounded-2xl border border-gray-200 dark:border-white/10 shadow-2xl flex flex-col overflow-hidden">
+                            <textarea id="query-input"
+                                class="w-full bg-transparent border-none focus:ring-0 text-slate-900 dark:text-white placeholder:text-text-secondary px-4 py-4 min-h-[60px] max-h-[200px] resize-none font-body text-base"
+                                placeholder="Zadaj pytanie radzie AI..." rows="1"></textarea>
+                            <div class="flex items-center justify-between px-2 pb-2">
+                                <div class="flex items-center gap-1">
+                                    <label
+                                        class="p-2 text-text-secondary hover:text-primary hover:bg-primary/10 rounded-lg transition-colors cursor-pointer"
+                                        title="Załącz plik">
+                                        <span class="material-symbols-outlined text-[20px]">attach_file</span>
+                                        <input type="file" id="file-input" accept=".pdf,.txt,.docx,.md" class="hidden">
+                                    </label>
+                                    <label
+                                        class="flex items-center gap-1 px-2 py-1 text-text-secondary hover:text-primary rounded-lg transition-colors cursor-pointer text-xs">
+                                        <input type="checkbox" id="kb-toggle" checked class="rounded text-primary">
+                                        <span>📚 Baza</span>
+                                    </label>
+                                    <label
+                                        class="flex items-center gap-1 px-2 py-1 text-text-secondary hover:text-primary rounded-lg transition-colors cursor-pointer text-xs">
+                                        <input type="checkbox" id="chat-toggle" class="rounded text-primary">
+                                        <span>💬 Chat</span>
+                                    </label>
+                                </div>
+                                <div class="flex items-center gap-3">
+                                    <span id="file-indicator" class="hidden text-xs text-text-secondary">
+                                        <span
+                                            class="material-symbols-outlined text-[14px] align-middle">description</span>
+                                        <span id="file-name"></span>
+                                    </span>
+                                    <button type="submit"
+                                        class="w-10 h-10 flex items-center justify-center bg-primary hover:bg-primary-hover text-white rounded-xl transition-all shadow-lg shadow-primary/20 hover:scale-105 active:scale-95">
+                                        <span class="material-symbols-outlined text-[20px]">send</span>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- ========== HISTORY PAGE ========== -->
+        <div id="page-history" class="page-content hidden flex flex-col h-full">
+            <header
+                class="h-16 border-b border-gray-200 dark:border-white/10 flex items-center px-6 shrink-0 bg-white/50 dark:bg-surface-darker/50 backdrop-blur-md">
+                <h2 class="text-lg font-bold">📜 Historia Sesji</h2>
+            </header>
+            <div class="flex-1 overflow-y-auto p-6">
+                <div class="max-w-4xl mx-auto">
+                    <div class="flex items-center justify-between mb-6">
+                        <p class="text-text-secondary">Wszystkie zapisane sesje narad</p>
+                        <button onclick="clearAllSessions()"
+                            class="text-sm text-red-400 hover:text-red-300 transition-colors">
+                            <span class="material-symbols-outlined text-[16px] align-middle">delete</span>
+                            Wyczyść historię
+                        </button>
+                    </div>
+                    <div id="history-list" class="space-y-4">
+                        <!-- History items loaded by JS -->
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ========== AGENTS PAGE ========== -->
+        <div id="page-agents" class="page-content hidden flex flex-col h-full">
+            <header
+                class="h-16 border-b border-gray-200 dark:border-white/10 flex items-center justify-between px-6 shrink-0 bg-white/50 dark:bg-surface-darker/50 backdrop-blur-md">
+                <h2 class="text-lg font-bold">👥 Konfiguracja Agentów</h2>
+                <button onclick="showAddSpecialistModal()"
+                    class="px-4 py-2 bg-primary hover:bg-primary-hover text-white text-sm font-medium rounded-lg transition-colors">
+                    + Dodaj specjalistę
+                </button>
+            </header>
+            <div class="flex-1 overflow-y-auto p-6">
+                <div class="max-w-4xl mx-auto">
+                    <!-- Core Agents -->
+                    <div class="mb-8">
+                        <h3 class="text-sm font-bold text-text-secondary uppercase tracking-wider mb-4">Agenci
+                            podstawowi</h3>
+                        <div id="core-agents-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                            <!-- Agents loaded by JS -->
+                        </div>
+                    </div>
+
+                    <!-- Specialists -->
+                    <div>
+                        <h3 class="text-sm font-bold text-text-secondary uppercase tracking-wider mb-4">Specjaliści</h3>
+                        <div id="specialists-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                            <div class="agent-card-config border-2 border-dashed border-gray-300 dark:border-white/10 rounded-xl p-6 flex flex-col items-center justify-center text-center cursor-pointer hover:border-primary/50 transition-colors"
+                                onclick="showAddSpecialistModal()">
+                                <span
+                                    class="material-symbols-outlined text-4xl text-text-secondary mb-2">add_circle_outline</span>
+                                <p class="text-sm text-text-secondary">Dodaj specjalistę</p>
+                                <p class="text-xs text-text-secondary/50 mt-1">SEO, Marketing, Legal...</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ========== AGENT BUILDER PAGE ========== -->
+        <div id="page-agent-builder" class="page-content hidden flex flex-col h-full">
+            <header
+                class="h-16 border-b border-gray-200 dark:border-white/10 flex items-center justify-between px-6 shrink-0 bg-white/50 dark:bg-surface-darker/50 backdrop-blur-md">
+                <h2 class="text-lg font-bold">🛠️ Kreator Agentów</h2>
+                <button onclick="openNewAgentEditor()"
+                    class="flex items-center gap-2 bg-primary hover:bg-primary-hover text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">
+                    <span class="material-symbols-outlined text-[18px]">add</span>
+                    Nowy Agent
+                </button>
+            </header>
+            <div class="flex-1 overflow-hidden p-6">
+                <div class="grid grid-cols-12 gap-6 h-full">
+                    <!-- Agents List Panel -->
+                    <div
+                        class="col-span-4 bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-white/10 overflow-hidden flex flex-col">
+                        <div class="p-4 border-b border-white/10">
+                            <h3 class="font-bold text-sm flex items-center gap-2">
+                                <span class="material-symbols-outlined text-primary text-[18px]">smart_toy</span>
+                                Twoi Agenci
+                            </h3>
+                        </div>
+                        <div id="custom-agents-list" class="flex-1 overflow-y-auto p-2 space-y-2">
+                            <div class="text-center py-8 text-text-secondary text-sm">
+                                <span class="material-symbols-outlined text-4xl mb-2 block opacity-30">robot_2</span>
+                                Brak custom agentów.<br>Kliknij "Nowy Agent" aby utworzyć.
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Editor Panel -->
+                    <div
+                        class="col-span-8 bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-white/10 overflow-hidden flex flex-col">
+                        <div class="p-4 border-b border-white/10 flex items-center justify-between">
+                            <h3 class="font-bold text-sm flex items-center gap-2" id="editor-title">
+                                <span class="material-symbols-outlined text-primary text-[18px]">edit</span>
+                                Edytor Agenta
+                            </h3>
+                            <div id="editor-actions" class="flex gap-2 hidden">
+                                <button onclick="testCurrentAgent()"
+                                    class="flex items-center gap-1 text-sm px-3 py-1.5 rounded-lg bg-green-500/10 text-green-400 hover:bg-green-500/20 transition-colors">
+                                    <span class="material-symbols-outlined text-[16px]">play_arrow</span>
+                                    Test
+                                </button>
+                                <button onclick="deleteCurrentAgent()"
+                                    class="flex items-center gap-1 text-sm px-3 py-1.5 rounded-lg bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-colors">
+                                    <span class="material-symbols-outlined text-[16px]">delete</span>
+                                    Usuń
+                                </button>
+                            </div>
+                        </div>
+                        <div id="agent-editor-content" class="flex-1 overflow-y-auto p-6">
+                            <div id="editor-placeholder" class="text-center py-16 text-text-secondary">
+                                <span
+                                    class="material-symbols-outlined text-6xl mb-4 block opacity-20">construction</span>
+                                <p class="text-lg mb-2">Wybierz agenta lub utwórz nowego</p>
+                                <p class="text-sm">Kliknij na agenta z listy lub użyj przycisku "Nowy Agent"</p>
+                            </div>
+                            <form id="agent-form" class="hidden space-y-6">
+                                <!-- Basic Info -->
+                                <div class="grid grid-cols-3 gap-4">
+                                    <div>
+                                        <label class="block text-sm font-medium mb-2">Nazwa</label>
+                                        <input type="text" id="agent-name" placeholder="Marketing Expert" required
+                                            class="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-2.5 text-sm focus:border-primary focus:ring-1 focus:ring-primary outline-none">
+                                    </div>
+                                    <div>
+                                        <label class="block text-sm font-medium mb-2">Emoji</label>
+                                        <input type="text" id="agent-emoji" placeholder="🎯" maxlength="4"
+                                            class="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-2.5 text-sm text-center focus:border-primary outline-none">
+                                    </div>
+                                    <div>
+                                        <label class="block text-sm font-medium mb-2">Rola</label>
+                                        <input type="text" id="agent-role" placeholder="Marketing Strategist"
+                                            class="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-2.5 text-sm focus:border-primary outline-none">
+                                    </div>
+                                </div>
+
+                                <!-- Template -->
+                                <div>
+                                    <label class="block text-sm font-medium mb-2">
+                                        <span
+                                            class="material-symbols-outlined text-[16px] align-middle mr-1">description</span>
+                                        Szablon
+                                    </label>
+                                    <select id="agent-template" onchange="loadTemplate(this.value)"
+                                        class="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-2.5 text-sm focus:border-primary outline-none">
+                                        <option value="">-- Wybierz szablon --</option>
+                                    </select>
+                                </div>
+
+                                <!-- Persona -->
+                                <div>
+                                    <label class="block text-sm font-medium mb-2">
+                                        <span
+                                            class="material-symbols-outlined text-[16px] align-middle mr-1">person</span>
+                                        Persona (opis osobowości)
+                                    </label>
+                                    <textarea id="agent-persona" rows="3"
+                                        placeholder="Jestem ekspertem marketingu z 15-letnim doświadczeniem..."
+                                        class="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-sm focus:border-primary outline-none resize-none"></textarea>
+                                </div>
+
+                                <!-- System Prompt -->
+                                <div>
+                                    <label class="block text-sm font-medium mb-2">
+                                        <span
+                                            class="material-symbols-outlined text-[16px] align-middle mr-1">code</span>
+                                        System Prompt
+                                    </label>
+                                    <textarea id="agent-system-prompt" rows="8" placeholder="Jesteś ekspertem od..."
+                                        class="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-sm font-mono focus:border-primary outline-none resize-none"></textarea>
+                                </div>
+
+                                <!-- Tools -->
+                                <div>
+                                    <label class="block text-sm font-medium mb-3">
+                                        <span
+                                            class="material-symbols-outlined text-[16px] align-middle mr-1">build</span>
+                                        Narzędzia
+                                    </label>
+                                    <div class="grid grid-cols-3 gap-3">
+                                        <label
+                                            class="flex items-center gap-3 p-3 bg-white/5 rounded-lg cursor-pointer hover:bg-white/10 transition-colors">
+                                            <input type="checkbox" name="tools" value="knowledge_base"
+                                                class="w-4 h-4 rounded border-white/20 text-primary focus:ring-primary">
+                                            <span class="text-sm">📚 Baza Wiedzy</span>
+                                        </label>
+                                        <label
+                                            class="flex items-center gap-3 p-3 bg-white/5 rounded-lg cursor-pointer hover:bg-white/10 transition-colors opacity-50">
+                                            <input type="checkbox" name="tools" value="web_search" disabled
+                                                class="w-4 h-4 rounded border-white/20">
+                                            <span class="text-sm">🌐 Web Search</span>
+                                        </label>
+                                        <label
+                                            class="flex items-center gap-3 p-3 bg-white/5 rounded-lg cursor-pointer hover:bg-white/10 transition-colors opacity-50">
+                                            <input type="checkbox" name="tools" value="code_exec" disabled
+                                                class="w-4 h-4 rounded border-white/20">
+                                            <span class="text-sm">💻 Code Exec</span>
+                                        </label>
+                                    </div>
+                                    <p class="text-xs text-text-secondary mt-2">* Web Search i Code Exec będą dostępne
+                                        wkrótce</p>
+                                </div>
+
+                                <!-- Memory Settings -->
+                                <div class="grid grid-cols-2 gap-4">
+                                    <div>
+                                        <label class="block text-sm font-medium mb-2">Limit kontekstu (tokeny)</label>
+                                        <input type="number" id="agent-context-limit" value="5000" min="500" max="32000"
+                                            class="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-2.5 text-sm focus:border-primary outline-none">
+                                    </div>
+                                    <div>
+                                        <label class="block text-sm font-medium mb-2">Typ pamięci</label>
+                                        <select id="agent-memory-type"
+                                            class="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-2.5 text-sm focus:border-primary outline-none">
+                                            <option value="session">Sesja (reset po zamknięciu)</option>
+                                            <option value="persistent">Trwała (zapamiętuje)</option>
+                                        </select>
+                                    </div>
+                                </div>
+
+                                <!-- Enabled Toggle -->
+                                <div class="flex items-center gap-3 p-4 bg-white/5 rounded-lg">
+                                    <input type="checkbox" id="agent-enabled" checked
+                                        class="w-5 h-5 rounded text-primary focus:ring-primary">
+                                    <div>
+                                        <label for="agent-enabled" class="font-medium cursor-pointer">Aktywny w
+                                            naradach</label>
+                                        <p class="text-xs text-text-secondary">Agent będzie uczestniczył w naradach rady
+                                        </p>
+                                    </div>
+                                </div>
+
+                                <!-- Save Button -->
+                                <input type="hidden" id="agent-id" value="">
+                                <div class="flex gap-3 pt-4">
+                                    <button type="submit"
+                                        class="flex-1 flex items-center justify-center gap-2 bg-primary hover:bg-primary-hover text-white py-3 rounded-lg font-medium transition-colors">
+                                        <span class="material-symbols-outlined text-[20px]">save</span>
+                                        Zapisz Agenta
+                                    </button>
+                                    <button type="button" onclick="cancelAgentEdit()"
+                                        class="px-6 py-3 bg-white/5 hover:bg-white/10 rounded-lg font-medium transition-colors">
+                                        Anuluj
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ========== PLUGINS PAGE ========== -->
+        <div id="page-plugins" class="page-content hidden flex flex-col h-full">
+            <header
+                class="h-16 border-b border-gray-200 dark:border-white/10 flex items-center px-6 shrink-0 bg-white/50 dark:bg-surface-darker/50 backdrop-blur-md">
+                <h2 class="text-lg font-bold">🔌 Wtyczki i Integracje</h2>
+            </header>
+            <div class="flex-1 overflow-y-auto p-6">
+                <div class="max-w-4xl mx-auto space-y-6">
+
+                    <!-- Plugins List -->
+                    <div
+                        class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-white/10 p-6">
+                        <h3 class="text-base font-bold mb-4 flex items-center gap-2">
+                            <span class="material-symbols-outlined text-primary">extension</span>
+                            Dostępne wtyczki
+                        </h3>
+                        <div id="plugins-list" class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            <div class="text-center py-4 text-text-secondary col-span-3">Ładowanie...</div>
+                        </div>
+                    </div>
+
+                    <!-- Web Search -->
+                    <div
+                        class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-white/10 p-6">
+                        <h3 class="text-base font-bold mb-4 flex items-center gap-2">
+                            <span>🔍</span>
+                            Web Search
+                        </h3>
+                        <form id="web-search-form" class="space-y-4" onsubmit="executeWebSearch(event)">
+                            <div>
+                                <input type="text" id="search-query" placeholder="Wpisz zapytanie do wyszukania..."
+                                    required
+                                    class="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-sm focus:border-primary outline-none">
+                            </div>
+                            <div class="flex gap-3">
+                                <button type="submit"
+                                    class="flex items-center gap-2 bg-primary hover:bg-primary-hover text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">
+                                    <span class="material-symbols-outlined text-[18px]">search</span>
+                                    Szukaj
+                                </button>
+                                <label class="flex items-center gap-2 text-sm text-text-secondary">
+                                    <input type="checkbox" id="use-tavily" checked class="rounded">
+                                    Użyj Tavily (wymaga API key)
+                                </label>
+                            </div>
+                        </form>
+                        <div id="search-results" class="mt-4 hidden">
+                            <div class="border-t border-white/10 pt-4">
+                                <div id="search-answer" class="mb-4 p-4 bg-primary/10 rounded-lg hidden"></div>
+                                <div id="search-items" class="space-y-3"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- URL Analyzer -->
+                    <div
+                        class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-white/10 p-6">
+                        <h3 class="text-base font-bold mb-4 flex items-center gap-2">
+                            <span>🔗</span>
+                            URL Analyzer
+                        </h3>
+                        <form id="url-analyzer-form" class="space-y-4" onsubmit="executeUrlAnalysis(event)">
+                            <div>
+                                <input type="url" id="analyze-url" placeholder="https://example.com/article" required
+                                    class="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-sm focus:border-primary outline-none">
+                            </div>
+                            <div class="flex gap-3 flex-wrap">
+                                <button type="submit"
+                                    class="flex items-center gap-2 bg-primary hover:bg-primary-hover text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">
+                                    <span class="material-symbols-outlined text-[18px]">link</span>
+                                    Analizuj
+                                </button>
+                                <label class="flex items-center gap-2 text-sm text-text-secondary">
+                                    <input type="checkbox" id="extract-links" class="rounded">
+                                    Wyciągnij linki
+                                </label>
+                                <label class="flex items-center gap-2 text-sm text-text-secondary">
+                                    <input type="checkbox" id="summarize-content" class="rounded">
+                                    Podsumuj przez AI
+                                </label>
+                            </div>
+                        </form>
+                        <div id="url-results" class="mt-4 hidden">
+                            <div class="border-t border-white/10 pt-4 space-y-3">
+                                <div id="url-title" class="font-bold text-lg"></div>
+                                <div id="url-description" class="text-sm text-text-secondary"></div>
+                                <div id="url-content"
+                                    class="text-sm bg-white/5 rounded-lg p-4 max-h-64 overflow-y-auto"></div>
+                                <div id="url-summary"
+                                    class="text-sm bg-green-500/10 border border-green-500/20 rounded-lg p-4 hidden">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+        </div>
+
+        <!-- ========== SETTINGS PAGE ========== -->
+        <div id="page-settings" class="page-content hidden flex flex-col h-full">
+            <header
+                class="h-16 border-b border-gray-200 dark:border-white/10 flex items-center px-6 shrink-0 bg-white/50 dark:bg-surface-darker/50 backdrop-blur-md">
+                <h2 class="text-lg font-bold">⚙️ Ustawienia</h2>
+            </header>
+            <div class="flex-1 overflow-y-auto p-6">
+                <div class="max-w-2xl mx-auto space-y-8">
+                    <!-- LLM Settings -->
+                    <div
+                        class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-white/10 p-6">
+                        <h3 class="text-base font-bold mb-4 flex items-center gap-2">
+                            <span class="material-symbols-outlined text-primary">smart_toy</span>
+                            Ustawienia LLM
+                        </h3>
+                        <div class="space-y-4">
+                            <div>
+                                <label class="block text-sm text-text-secondary mb-2">Domyślny provider</label>
+                                <select id="setting-default-provider"
+                                    class="w-full bg-white dark:bg-black/20 border border-gray-200 dark:border-white/10 rounded-lg px-3 py-2">
+                                    <option value="openai">OpenAI</option>
+                                    <option value="grok">Grok (xAI)</option>
+                                    <option value="gemini">Google Gemini</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-sm text-text-secondary mb-2">Domyślny model</label>
+                                <select id="setting-default-model"
+                                    class="w-full bg-white dark:bg-black/20 border border-gray-200 dark:border-white/10 rounded-lg px-3 py-2">
+                                    <option value="gpt-4o">GPT-4o</option>
+                                    <option value="gpt-4o-mini">GPT-4o mini</option>
+                                    <option value="gpt-5">GPT-5</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-sm text-text-secondary mb-2">Temperatura (kreatywność)</label>
+                                <input type="range" id="setting-temperature" min="0" max="100" value="70"
+                                    class="w-full">
+                                <div class="flex justify-between text-xs text-text-secondary mt-1">
+                                    <span>Precyzyjny (0.0)</span>
+                                    <span id="temp-value">0.7</span>
+                                    <span>Kreatywny (1.0)</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- API Keys -->
+                    <div
+                        class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-white/10 p-6">
+                        <h3 class="text-base font-bold mb-4 flex items-center gap-2">
+                            <span class="material-symbols-outlined text-primary">key</span>
+                            Klucze API
+                        </h3>
+                        <p class="text-sm text-text-secondary mb-4">Klucze są przechowywane w pliku .env na serwerze</p>
+                        <div class="space-y-4">
+                            <div>
+                                <label class="block text-sm text-text-secondary mb-2">OpenAI API Key</label>
+                                <div class="flex gap-2">
+                                    <input type="password" id="setting-openai-key" placeholder="sk-..."
+                                        class="flex-1 bg-white dark:bg-black/20 border border-gray-200 dark:border-white/10 rounded-lg px-3 py-2 font-mono text-sm"
+                                        value="••••••••••••••••">
+                                    <button class="px-3 py-2 bg-slate-100 dark:bg-white/5 rounded-lg text-sm"
+                                        onclick="togglePasswordVisibility('setting-openai-key')">👁️</button>
+                                </div>
+                            </div>
+                            <div>
+                                <label class="block text-sm text-text-secondary mb-2">Grok API Key</label>
+                                <div class="flex gap-2">
+                                    <input type="password" id="setting-grok-key" placeholder="xai-..."
+                                        class="flex-1 bg-white dark:bg-black/20 border border-gray-200 dark:border-white/10 rounded-lg px-3 py-2 font-mono text-sm"
+                                        value="••••••••••••••••">
+                                    <button class="px-3 py-2 bg-slate-100 dark:bg-white/5 rounded-lg text-sm"
+                                        onclick="togglePasswordVisibility('setting-grok-key')">👁️</button>
+                                </div>
+                            </div>
+                            <div>
+                                <label class="block text-sm text-text-secondary mb-2">Gemini API Key</label>
+                                <div class="flex gap-2">
+                                    <input type="password" id="setting-gemini-key" placeholder="AI..."
+                                        class="flex-1 bg-white dark:bg-black/20 border border-gray-200 dark:border-white/10 rounded-lg px-3 py-2 font-mono text-sm"
+                                        value="••••••••••••••••">
+                                    <button class="px-3 py-2 bg-slate-100 dark:bg-white/5 rounded-lg text-sm"
+                                        onclick="togglePasswordVisibility('setting-gemini-key')">👁️</button>
+                                </div>
+                            </div>
+                        </div>
+                        <p class="text-xs text-yellow-500 mt-4">⚠️ Edycja kluczy wymaga restartu serwera</p>
+                    </div>
+
+                    <!-- Knowledge Base -->
+                    <div
+                        class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-white/10 p-6">
+                        <h3 class="text-base font-bold mb-4 flex items-center gap-2">
+                            <span class="material-symbols-outlined text-primary">database</span>
+                            Baza Wiedzy
+                        </h3>
+                        <div class="space-y-4">
+                            <div class="flex items-center justify-between p-3 bg-slate-50 dark:bg-black/20 rounded-lg">
+                                <div>
+                                    <p class="text-sm font-medium">Chunków w bazie</p>
+                                    <p id="settings-kb-count" class="text-2xl font-bold text-primary">0</p>
+                                </div>
+                                <span class="material-symbols-outlined text-4xl text-primary/30">storage</span>
+                            </div>
+                            <div>
+                                <label class="flex items-center gap-3 cursor-pointer">
+                                    <input type="checkbox" id="setting-kb-default" checked class="rounded text-primary">
+                                    <span class="text-sm">Domyślnie używaj bazy wiedzy</span>
+                                </label>
+                            </div>
+                            <div>
+                                <label class="flex items-center gap-3 cursor-pointer">
+                                    <input type="checkbox" id="setting-show-sources" checked
+                                        class="rounded text-primary">
+                                    <span class="text-sm">Pokazuj źródła w odpowiedziach</span>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Appearance -->
+                    <div
+                        class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-white/10 p-6">
+                        <h3 class="text-base font-bold mb-4 flex items-center gap-2">
+                            <span class="material-symbols-outlined text-primary">palette</span>
+                            Wygląd
+                        </h3>
+                        <div class="space-y-4">
+                            <div>
+                                <label class="block text-sm text-text-secondary mb-2">Motyw</label>
+                                <div class="flex gap-2">
+                                    <button onclick="setTheme('light')"
+                                        class="flex-1 p-3 rounded-lg border border-gray-200 dark:border-white/10 hover:border-primary transition-colors text-center">
+                                        <span class="material-symbols-outlined">light_mode</span>
+                                        <p class="text-xs mt-1">Jasny</p>
+                                    </button>
+                                    <button onclick="setTheme('dark')"
+                                        class="flex-1 p-3 rounded-lg border border-gray-200 dark:border-white/10 hover:border-primary transition-colors text-center bg-primary/10 border-primary">
+                                        <span class="material-symbols-outlined">dark_mode</span>
+                                        <p class="text-xs mt-1">Ciemny</p>
+                                    </button>
+                                    <button onclick="setTheme('system')"
+                                        class="flex-1 p-3 rounded-lg border border-gray-200 dark:border-white/10 hover:border-primary transition-colors text-center">
+                                        <span class="material-symbols-outlined">contrast</span>
+                                        <p class="text-xs mt-1">System</p>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Save Button -->
+                    <div class="flex justify-end gap-3">
+                        <button onclick="resetSettings()"
+                            class="px-6 py-2 border border-gray-200 dark:border-white/10 rounded-lg text-sm transition-colors hover:bg-slate-100 dark:hover:bg-white/5">
+                            Przywróć domyślne
+                        </button>
+                        <button onclick="saveSettings()"
+                            class="px-6 py-2 bg-primary hover:bg-primary-hover text-white rounded-lg text-sm font-medium transition-colors shadow-lg shadow-primary/20">
+                            Zapisz ustawienia
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- RIGHT SIDEBAR -->
+    <aside
+        class="w-72 bg-white dark:bg-surface-darker border-l border-gray-200 dark:border-white/10 hidden xl:flex flex-col shrink-0">
+        <div class="p-6 border-b border-gray-200 dark:border-white/10">
+            <h3 class="font-bold text-lg text-slate-900 dark:text-white">Kontekst Sesji</h3>
+            <p class="text-sm text-text-secondary">Konfiguracja narady</p>
+        </div>
+        <div class="p-4 space-y-6 overflow-y-auto flex-1">
+            <!-- Active Agents -->
+            <div>
+                <h4 class="text-xs font-bold text-text-secondary uppercase tracking-wider mb-3">Aktywni Agenci</h4>
+                <div class="space-y-3" id="agents-list"></div>
+            </div>
+
+            <!-- Context Files -->
+            <div>
+                <h4 class="text-xs font-bold text-text-secondary uppercase tracking-wider mb-3">Pliki kontekstowe</h4>
+                <div class="space-y-2" id="context-files">
+                    <p class="text-xs text-text-secondary/50 italic">Brak załączonych plików</p>
+                </div>
+            </div>
+
+            <!-- Sources -->
+            <div id="sources-section" class="hidden">
+                <h4 class="text-xs font-bold text-text-secondary uppercase tracking-wider mb-3">Źródła z bazy</h4>
+                <div class="space-y-2" id="sources-list"></div>
+            </div>
+
+            <!-- Usage Stats -->
+            <div>
+                <h4 class="text-xs font-bold text-text-secondary uppercase tracking-wider mb-3">Statystyki sesji</h4>
+                <div class="bg-slate-50 dark:bg-black/20 rounded-lg p-3 border border-gray-200 dark:border-white/5">
+                    <div class="flex justify-between items-center mb-2">
+                        <span class="text-xs text-text-secondary">Aktywni agenci</span>
+                        <span id="stat-agents" class="text-xs font-mono text-slate-900 dark:text-white">5</span>
+                    </div>
+                    <div class="flex justify-between items-center mb-2">
+                        <span class="text-xs text-text-secondary">Provider</span>
+                        <span id="stat-provider" class="text-xs font-mono text-slate-900 dark:text-white">OpenAI</span>
+                    </div>
+                    <div class="flex justify-between items-center mb-2">
+                        <span class="text-xs text-text-secondary">Tokeny (est.)</span>
+                        <span id="stat-tokens" class="text-xs font-mono text-slate-900 dark:text-white">0</span>
+                    </div>
+                    <div class="flex justify-between items-center">
+                        <span class="text-xs text-text-secondary">Koszt (est.)</span>
+                        <span id="stat-cost" class="text-xs font-mono text-slate-900 dark:text-white">$0.00</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </aside>
+
+    <!-- Add Specialist Modal -->
+    <div id="specialist-modal"
+        class="hidden fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div
+            class="bg-white dark:bg-surface-dark rounded-2xl border border-gray-200 dark:border-white/10 w-full max-w-md shadow-2xl">
+            <div class="p-6 border-b border-gray-200 dark:border-white/10 flex items-center justify-between">
+                <h3 class="text-lg font-bold">Dodaj Specjalistę</h3>
+                <button onclick="hideAddSpecialistModal()" class="text-text-secondary hover:text-white">
+                    <span class="material-symbols-outlined">close</span>
+                </button>
+            </div>
+            <div class="p-6 space-y-4">
+                <div>
+                    <label class="block text-sm text-text-secondary mb-2">Nazwa</label>
+                    <input type="text" id="specialist-name" placeholder="np. SEO Expert"
+                        class="w-full bg-white dark:bg-black/20 border border-gray-200 dark:border-white/10 rounded-lg px-3 py-2">
+                </div>
+                <div>
+                    <label class="block text-sm text-text-secondary mb-2">Rola</label>
+                    <input type="text" id="specialist-role" placeholder="np. Specjalista SEO"
+                        class="w-full bg-white dark:bg-black/20 border border-gray-200 dark:border-white/10 rounded-lg px-3 py-2">
+                </div>
+                <div>
+                    <label class="block text-sm text-text-secondary mb-2">Emoji</label>
+                    <input type="text" id="specialist-emoji" placeholder="🔍"
+                        class="w-full bg-white dark:bg-black/20 border border-gray-200 dark:border-white/10 rounded-lg px-3 py-2"
+                        maxlength="2">
+                </div>
+                <div>
+                    <label class="block text-sm text-text-secondary mb-2">System Prompt</label>
+                    <textarea id="specialist-prompt" rows="4" placeholder="Jesteś ekspertem SEO. Analizujesz..."
+                        class="w-full bg-white dark:bg-black/20 border border-gray-200 dark:border-white/10 rounded-lg px-3 py-2 resize-none"></textarea>
+                </div>
+            </div>
+            <div class="p-6 border-t border-gray-200 dark:border-white/10 flex justify-end gap-3">
+                <button onclick="hideAddSpecialistModal()"
+                    class="px-4 py-2 border border-gray-200 dark:border-white/10 rounded-lg text-sm">Anuluj</button>
+                <button onclick="addSpecialist()"
+                    class="px-4 py-2 bg-primary hover:bg-primary-hover text-white rounded-lg text-sm font-medium">Dodaj</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/app.js"></script>
+</body>
+
+</html>
