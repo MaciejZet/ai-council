@@ -1,168 +1,168 @@
-# AI Council 🏛️
+# AI Council
 
-**Zaawansowany system wieloagentowej rady AI z bazą wiedzy, streamingiem i pluginami**
+**Advanced multi-agent AI council system with knowledge base, streaming, and plugins**
 
-AI Council to inteligentny system konsultingowy wykorzystujący zespół specjalizowanych agentów AI do analizy problemów z różnych perspektyw. System łączy wiedzę z Twojej biblioteki biznesowej z nowoczesnymi modelami AI (GPT-5, Grok, Gemini).
+AI Council is an intelligent consulting system that uses a team of specialized AI agents to analyze problems from different perspectives. The system combines knowledge from your business library with modern AI models (GPT-5, Grok, Gemini).
 
-## 🚀 Szybki start
+## Quick Start
 
 ```bash
-# 1. Sklonuj i przejdź do katalogu
+# 1. Clone and navigate to directory
 cd ai-council
 
-# 2. Uruchom skrypt instalacyjny
+# 2. Run installation script
 ./run.sh
 ```
 
-Aplikacja otworzy się na: **http://localhost:8501**
+Application will be available at: **http://localhost:8501**
 
-### Wymagania wstępne
+### Prerequisites
 - Python 3.12+
-- Klucze API dla wybranych providerów
+- API keys for selected providers
 
-## ✨ Kluczowe możliwości
+## Key Features
 
-### 🏛️ Rada Ekspertów AI
-- **5 agentów podstawowych**:
-  - 🎯 **Strateg** - wizja długoterminowa, cele biznesowe
-  - 📊 **Analityk** - analiza za/przeciw, ocena ryzyka
-  - 🔧 **Praktyk** - wykonalność, plan implementacji
-  - 🎓 **Ekspert** - głęboka wiedza domenowa z Twojej bazy
-  - 🔮 **Syntezator** - ostateczna rekomendacja łącząca wszystkie perspektywy
+### AI Council of Experts
+- **5 core agents**:
+  - **Strategist** - long-term vision, business goals
+  - **Analyst** - pros/cons analysis, risk assessment
+  - **Practitioner** - feasibility, implementation planning
+  - **Expert** - deep domain knowledge from your database
+  - **Synthesizer** - final recommendation combining all perspectives
 
-- **Specjaliści branżowi**: SEO, LinkedIn, Social Media, Branding, Blog Content
-- **Dynamiczne włączanie/wyłączanie** agentów w czasie rzeczywistym
+- **Industry specialists**: SEO, LinkedIn, Social Media, Branding, Blog Content
+- **Dynamic agent enable/disable** in real-time
 
-### 📚 Inteligentna baza wiedzy
-- **RAG (Retrieval-Augmented Generation)** - agenci czerpią kontekst z Twoich dokumentów
-- **Automatyczna kategoryzacja** książek (marketing, strategia, biznes, produktywność)
-- **Import PDF** - cała Twoja biblioteka biznesowa (48 Praw Władzy, Atomowe nawyki, itp.)
-- **Pinecone vector database** - semantyczne wyszukiwanie
+### Intelligent Knowledge Base
+- **RAG (Retrieval-Augmented Generation)** - agents draw context from your documents
+- **Automatic book categorization** (marketing, strategy, business, productivity)
+- **PDF import** - your entire business library (48 Laws of Power, Atomic Habits, etc.)
+- **Pinecone vector database** - semantic search
 
-### ⚡ Zaawansowane funkcje
+### Advanced Features
 - **Multi-provider AI**: OpenAI (GPT-4o/5), Grok (xAI), Gemini (Google)
-- **Real-time streaming** - odpowiedzi generowane na żywo token po tokenie
-- **Tryb debaty** - wielorundowe dyskusje między agentami
-- **Tryb chat** - kontekst rozmowy utrzymywany między zapytaniami
-- **Załączniki** - analiza plików PDF/txt/docx/md
-- **Śledzenie kosztów** - pełna kalkulacja tokenów i kosztów
+- **Real-time streaming** - responses generated live token by token
+- **Debate mode** - multi-round discussions between agents
+- **Chat mode** - conversation context maintained between queries
+- **Attachments** - analysis of PDF/txt/docx/md files
+- **Cost tracking** - full token and cost calculation
 
-### 🛠️ Plugin system
-- 🔍 **Web search** (Tavily, DuckDuckGo)
-- 📄 **URL analyzer** - analiza i podsumowanie stron internetowych
-- 🌐 **Wikipedia** - wyszukiwanie i podsumowanie artykułów
-- 🌤️ **Weather** - prognoza pogody
-- 📈 **Stocks** - dane giełdowe
-- 🧮 **Calculator** - kalkulator matematyczny
-- 🛠️ **Utilities** - konwertery, hash, random, narzędzia tekstowe
+### Plugin System
+- **Web search** (Tavily, DuckDuckGo)
+- **URL analyzer** - website analysis and summarization
+- **Wikipedia** - article search and summarization
+- **Weather** - weather forecasts
+- **Stocks** - stock market data
+- **Calculator** - mathematical calculator
+- **Utilities** - converters, hash, random, text tools
 
-### 🎨 Custom Agenci
-- **Własne agenty AI** - twórz specjalistów z własnych promptów
-- **Template system** - gotowe szablony dla różnych ról
-- **Tool integration** - integracja z pluginami
-- **Test mode** - testuj agentów przed zapisaniem
+### Custom Agents
+- **Custom AI agents** - create specialists with your own prompts
+- **Template system** - ready-made templates for different roles
+- **Tool integration** - integration with plugins
+- **Test mode** - test agents before saving
 
-## 📖 Przykładowe zastosowania
+## Use Cases
 
-**Dla przedsiębiorców:**
-- Analiza strategii rozwoju firmy
-- Ocena ryzyka nowych inwestycji
-- Optymalizacja procesów biznesowych
-- Content marketing i social media strategy
+**For entrepreneurs:**
+- Business development strategy analysis
+- New investment risk assessment
+- Business process optimization
+- Content marketing and social media strategy
 
-**Dla specjalistów:**
-- Analiza technicznych rozwiązań
-- Badania rynku i konkurencji
-- Strategie marketingowe
-- Optymalizacja SEO i content
+**For specialists:**
+- Technical solution analysis
+- Market research and competition
+- Marketing strategies
+- SEO and content optimization
 
-## 🏗️ Architektura
+## Architecture
 
 ### Backend (FastAPI)
 ```
 ├── main.py                 # REST API + WebSocket streaming
 ├── src/
-│   ├── agents/            # System agentów
-│   │   ├── base.py        # Klasa bazowa agentów
-│   │   ├── core_agents.py # 5 głównych agentów
-│   │   ├── specialists.py # Specjaliści branżowi
-│   │   ├── custom_agents.py # Własne agenty
-│   │   └── agent_storage.py # Zarządzanie custom agentami
+│   ├── agents/            # Agent system
+│   │   ├── base.py        # Agent base class
+│   │   ├── core_agents.py # 5 core agents
+│   │   ├── specialists.py # Industry specialists
+│   │   ├── custom_agents.py # Custom agents
+│   │   └── agent_storage.py # Custom agent management
 │   │
-│   ├── council/           # Logika rady
-│   │   ├── orchestrator.py # Koordynacja deliberacji
-│   │   └── debate.py      # System debat
+│   ├── council/           # Council logic
+│   │   ├── orchestrator.py # Deliberation coordination
+│   │   └── debate.py      # Debate system
 │   │
-│   ├── knowledge/         # Baza wiedzy
-│   │   ├── ingest.py      # PDF → wektory
+│   ├── knowledge/         # Knowledge base
+│   │   ├── ingest.py      # PDF → vectors
 │   │   └── retriever.py   # RAG retrieval
 │   │
-│   ├── llm_providers.py   # Integracja z AI
+│   ├── llm_providers.py   # AI integration
 │   ├── plugins/           # Plugin system
-│   └── prompt_templates.py # Szablony promptów
+│   └── prompt_templates.py # Prompt templates
 ```
 
 ### Frontend
 ```
 ├── static/
-│   ├── index.html         # Główny UI
-│   ├── js/app.js          # JavaScript aplikacja
+│   ├── index.html         # Main UI
+│   ├── js/app.js          # JavaScript application
 │   └── css/styles.css     # Styling
 └── app.py                 # Legacy Streamlit UI
 ```
 
-## 🔧 Konfiguracja API
+## API Configuration
 
-Utwórz plik `.env` w katalogu głównym:
+Create a `.env` file in the root directory:
 
 ```env
-# Wymagane dla bazy wiedzy
+# Required for knowledge base
 PINECONE_API_KEY=your_pinecone_key
 PINECONE_INDEX_NAME=your_index_name
 
-# Wybierz przynajmniej jednego providera AI
+# Choose at least one AI provider
 OPENAI_API_KEY=your_openai_key
 GROK_API_KEY=your_grok_key
 GEMINI_API_KEY=your_gemini_key
 
-# Opcjonalne - dla pluginów
+# Optional - for plugins
 TAVILY_API_KEY=your_tavily_key
 WEATHER_API_KEY=your_weather_key
 ```
 
-## 📚 Zarządzanie bazą wiedzy
+## Knowledge Base Management
 
-### Import pojedynczego PDF
+### Import single PDF
 ```bash
-python -c "from src.knowledge.ingest import ingest_pdf; ingest_pdf('books_pdf/atomowe_nawyki.pdf')"
+python -c "from src.knowledge.ingest import ingest_pdf; ingest_pdf('books_pdf/atomic_habits.pdf')"
 ```
 
-### Import całego katalogu
+### Import entire directory
 ```bash
 python -c "from src.knowledge.ingest import ingest_directory; ingest_directory('books_pdf/')"
 ```
 
-### Sprawdź statystyki
+### Check statistics
 ```bash
 python -c "from src.knowledge.ingest import get_ingestion_stats; print(get_ingestion_stats())"
 ```
 
-## 🎯 Tworzenie własnych agentów
+## Creating Custom Agents
 
 ```python
 from src.agents.specialists import create_custom_specialist
 
-# Przykład: Specjalista ds. Email Marketing
+# Example: Email Marketing Specialist
 email_expert = create_custom_specialist(
     name="Email Marketing Expert",
     specialty="Email Marketing",
     emoji="📧",
-    expertise_areas=["Kampanie email", "Automatyzacja", "Segmentacja"],
+    expertise_areas=["Email campaigns", "Automation", "Segmentation"],
     focus_points=["Open rate", "CTR", "Deliverability"]
 )
 ```
 
-### Zaawansowane custom agenty
+### Advanced custom agents
 ```python
 from src.agents.custom_agents import create_custom_agent, CustomAgentConfig
 
@@ -170,8 +170,8 @@ config = CustomAgentConfig(
     name="Data Analyst",
     emoji="📊",
     role="Data Science Expert",
-    persona="Specjalizuję się w analizie danych i machine learning",
-    system_prompt="Jesteś ekspertem data science...",
+    persona="I specialize in data analysis and machine learning",
+    system_prompt="You are a data science expert...",
     tools=["calculator", "web_search", "knowledge_base"],
     context_limit=10000
 )
@@ -179,45 +179,45 @@ config = CustomAgentConfig(
 agent_id = create_custom_agent(config)
 ```
 
-## 🔌 API Endpoints
+## API Endpoints
 
-### Rada AI
-- `POST /api/deliberate` - Analiza przez radę agentów
-- `GET /api/deliberate/stream` - Streaming deliberacji
-- `GET /api/debate/stream` - Wielorundowa debata agentów
+### AI Council
+- `POST /api/deliberate` - Analysis by council of agents
+- `GET /api/deliberate/stream` - Streaming deliberation
+- `GET /api/debate/stream` - Multi-round agent debate
 
-### Zarządzanie agentami
-- `GET /api/agents` - Lista wszystkich agentów
-- `POST /api/agents/{name}/toggle` - Włącz/wyłącz agenta
-- `GET/POST/PUT/DELETE /api/agents/custom` - Zarządzanie custom agentami
+### Agent Management
+- `GET /api/agents` - List all agents
+- `POST /api/agents/{name}/toggle` - Enable/disable agent
+- `GET/POST/PUT/DELETE /api/agents/custom` - Custom agent management
 
-### Baza wiedzy
-- `POST /api/ingest` - Import PDF do bazy
-- `GET /api/stats` - Statystyki bazy wiedzy
+### Knowledge Base
+- `POST /api/ingest` - Import PDF to knowledge base
+- `GET /api/stats` - Knowledge base statistics
 
-### Pluginy
-- `GET /api/plugins` - Lista dostępnych pluginów
-- `POST /api/plugins/web-search` - Wyszukiwanie internetowe
-- `POST /api/plugins/analyze-url` - Analiza URL
-- `POST /api/plugins/weather` - Pogoda
-- `POST /api/plugins/stocks` - Dane giełdowe
+### Plugins
+- `GET /api/plugins` - List available plugins
+- `POST /api/plugins/web-search` - Web search
+- `POST /api/plugins/analyze-url` - URL analysis
+- `POST /api/plugins/weather` - Weather
+- `POST /api/plugins/stocks` - Stock data
 
-## 🎨 UI Features
+## UI Features
 
-- **Dark theme** - nowoczesny, minimalistyczny design
-- **Real-time updates** - odpowiedzi pojawiają się na żywo
-- **Responsive layout** - działa na desktop i mobile
-- **Agent management** - włączaj/wyłączaj agentów w sidebar
-- **Cost tracking** - monitoruj koszty API w czasie rzeczywistym
-- **Export options** - pobieraj wyniki jako Markdown
+- **Dark theme** - modern, minimalist design
+- **Real-time updates** - responses appear live
+- **Responsive layout** - works on desktop and mobile
+- **Agent management** - enable/disable agents in sidebar
+- **Cost tracking** - monitor API costs in real-time
+- **Export options** - download results as Markdown
 
-## 🚦 Wymagania systemowe
+## System Requirements
 
 - **Python**: 3.12+
-- **RAM**: 8GB+ (dla dużych baz wiedzy)
-- **Dysk**: 10GB+ (dla wektorowej bazy danych)
+- **RAM**: 8GB+ (for large knowledge bases)
+- **Disk**: 10GB+ (for vector database)
 
-### Zależności
+### Dependencies
 ```
 fastapi>=0.109.0         # REST API
 uvicorn>=0.27.0          # ASGI server
@@ -228,25 +228,25 @@ pypdf>=3.0.0            # PDF processing
 google-generativeai>=0.3.0  # Gemini
 ```
 
-## 🔐 Bezpieczeństwo
+## Security
 
-- Wszystkie klucze API przechowywane lokalnie w `.env`
-- Brak zewnętrznych połączeń bez Twojej zgody
-- Dane PDF przetwarzane lokalnie
-- Możliwość pracy offline (bez pluginów)
+- All API keys stored locally in `.env`
+- No external connections without your consent
+- PDF data processed locally
+- Offline capability (without plugins)
 
-## 🤝 Przyczynianie się
+## Contributing
 
-Projekt jest otwarty - możesz:
-- Dodawać nowe specjalistów
-- Tworzyć własne pluginy
-- Ulepszać UI/UX
-- Rozszerzać możliwości AI
+The project is open - you can:
+- Add new specialists
+- Create custom plugins
+- Improve UI/UX
+- Extend AI capabilities
 
-## 📄 Licencja
+## License
 
-MIT License - wykorzystaj komercyjnie i prywatnie.
+MIT License - use commercially and privately.
 
 ---
 
-**AI Council** - Twój osobisty zespół konsultantów AI, dostępny 24/7. 🚀
+**AI Council** - Your personal team of AI consultants, available 24/7.
