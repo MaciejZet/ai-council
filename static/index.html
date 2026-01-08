@@ -159,35 +159,15 @@
                         </p>
                     </div>
                 </div>
-                <!-- Mode Toggle -->
-                <div class="flex items-center gap-1 mr-auto ml-6 bg-white/5 rounded-lg p-1">
-                    <button id="mode-council" onclick="setMode('council')"
-                        class="mode-btn active flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-all">
-                        <span>🏛️</span>
-                        <span class="hidden sm:inline">Narada</span>
-                    </button>
-                    <button id="mode-debate" onclick="setMode('debate')"
-                        class="mode-btn flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-all">
-                        <span>⚔️</span>
-                        <span class="hidden sm:inline">Debata</span>
-                    </button>
-                    <button id="mode-mentors" onclick="setMode('mentors')"
-                        class="mode-btn flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-all">
-                        <span>🌟</span>
-                        <span class="hidden sm:inline">Ikony</span>
-                    </button>
-                </div>
-                <div class="flex items-center gap-3">
-                    <select id="provider-select"
-                        class="bg-white dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-lg px-3 py-1.5 text-sm">
-                        <option value="openai">OpenAI</option>
-                        <option value="grok">Grok</option>
-                        <option value="gemini">Gemini</option>
-                    </select>
-                    <select id="model-select"
-                        class="bg-white dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-lg px-3 py-1.5 text-sm">
-                        <option value="gpt-4o">GPT-4o</option>
-                    </select>
+                <!-- Mode Selector (Custom) -->
+                <div id="mode-select-container" class="relative mr-auto ml-6 z-30"></div>
+
+                <div class="flex items-center gap-3 z-30">
+                    <!-- Provider Selector (Custom) -->
+                    <div id="provider-select-container" class="relative min-w-[140px]"></div>
+
+                    <!-- Model Selector (Custom) -->
+                    <div id="model-select-container" class="relative min-w-[140px]"></div>
                 </div>
             </header>
 

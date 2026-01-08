@@ -600,6 +600,60 @@ async def historical_deliberate_stream(
     )
 
 
+# ========== COUNCIL MODES API ==========
+from src.council.modes import COUNCIL_MODES, get_mode, list_modes
+
+
+@app.get("/api/council/modes")
+async def get_council_modes():
+    """Get available council modes"""
+    return {
+        "modes": list_modes()
+    }
+
+
+@app.get("/api/council/mode/stream")
+async def council_mode_stream(
+    mode: str,
+    query: str,
+    provider: str = "openai",
+    model: str = "gpt-4o"
+):
+    """
+    Stream council mode deliberation.
+    
+    Args:
+        mode: Mode ID (deep_dive, speed_round, devils_advocate, swot, red_team)
+        query: User question
+        provider: LLM provider
+        model: Model name
+    """
+    mode_instance = get_mode(mode)
+    if not mode_instance:
+        return {"error": f"Unknown mode: {mode}"}
+    
+    # Create LLM provider
+    from src.llm_providers import DeepSeekProvider
+    if provider == "openai":
+        llm = OpenAIProvider(model=model)
+    elif provider == "grok":
+        llm = GrokProvider(model=model)
+    elif provider == "deepseek":
+        llm = DeepSeekProvider(model=model)
+    else:
+        llm = GeminiProvider(model=model)
+    
+    return StreamingResponse(
+        mode_instance.run_stream(query, llm),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
+
+
 # ========== CUSTOM AGENTS API ==========
 @app.get("/api/agents/custom")
 async def list_custom_agents():

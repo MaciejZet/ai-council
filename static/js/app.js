@@ -22,7 +22,8 @@ let specialists = [];
 const MODELS = {
     openai: ['gpt-4o', 'gpt-4o-mini', 'gpt-4.1', 'gpt-5-nano', 'gpt-5-mini', 'gpt-5', 'o1-mini'],
     grok: ['grok-2', 'grok-beta'],
-    gemini: ['gemini-2.0-flash-exp', 'gemini-1.5-pro', 'gemini-1.5-flash']
+    gemini: ['gemini-2.5-pro-preview', 'gemini-2.0-flash', 'gemini-2.0-flash-lite', 'gemini-1.5-pro'],
+    deepseek: ['deepseek-chat', 'deepseek-reasoner']
 };
 
 const TOKEN_COSTS = {
@@ -67,6 +68,168 @@ const sourcesSection = document.getElementById('sources-section');
 const recentSessionsList = document.getElementById('recent-sessions');
 
 // ========== INITIALIZATION ==========
+// ========== CUSTOM COMPONENTS ==========
+class CustomSelect {
+    constructor({ containerId, options, initialValue, onChange, renderLabel, icon, align = 'left' }) {
+        this.container = document.getElementById(containerId);
+        if (!this.container) return;
+
+        this.options = options || [];
+        this.value = initialValue;
+        this.onChange = onChange;
+        this.renderLabel = renderLabel || ((opt) => opt.label);
+        this.icon = icon;
+        this.align = align;
+        this.isOpen = false;
+
+        this.init();
+    }
+
+    init() {
+        this.container.classList.add('custom-select');
+
+        // Ensure options are formatted correctly (handle simple strings)
+        this.normalizeOptions();
+
+        // Initial render
+        this.render();
+
+        // Click outside listener
+        document.addEventListener('click', (e) => {
+            if (this.isOpen && !this.container.contains(e.target)) {
+                this.close();
+            }
+        });
+    }
+
+    normalizeOptions() {
+        // Support both ['a', 'b'] and [{value:'a', label:'A'}] and groups
+        // Structure: [{label: 'Group', options: [...]}, {value: ...}]
+    }
+
+    toggle() {
+        if (this.isOpen) this.close(); else this.open();
+    }
+
+    open() {
+        this.isOpen = true;
+        this.container.querySelector('.select-options').classList.remove('hidden');
+        this.container.querySelector('.select-trigger').classList.add('active');
+    }
+
+    close() {
+        this.isOpen = false;
+        this.container.querySelector('.select-options').classList.add('hidden');
+        this.container.querySelector('.select-trigger').classList.remove('active');
+    }
+
+    setValue(value, triggerChange = true) {
+        if (this.value === value && !triggerChange) return;
+        this.value = value;
+        this.updateTrigger();
+        if (this.onChange && triggerChange) this.onChange(value);
+        this.close();
+    }
+
+    setOptions(newOptions) {
+        this.options = newOptions;
+        this.renderOptions(this.container.querySelector('.select-options-content'));
+
+        // Check if current value exists in new options
+        const allValues = this.getAllValues();
+        if (!allValues.includes(this.value) && allValues.length > 0) {
+            this.setValue(allValues[0]);
+        }
+        this.updateTrigger();
+    }
+
+    getAllValues() {
+        const values = [];
+        this.options.forEach(opt => {
+            if (opt.group) {
+                opt.options.forEach(o => values.push(o.value));
+            } else {
+                values.push(opt.value);
+            }
+        });
+        return values;
+    }
+
+    getSelectedOption() {
+        let found = null;
+        this.options.forEach(opt => {
+            if (opt.group) {
+                const inGroup = opt.options.find(o => o.value === this.value);
+                if (inGroup) found = inGroup;
+            } else if (opt.value === this.value) {
+                found = opt;
+            }
+        });
+        return found || { label: this.value, value: this.value };
+    }
+
+    render() {
+        const alignClass = this.align === 'right' ? 'right-0' : 'left-0';
+        this.container.innerHTML = `
+            <button class="select-trigger flex items-center justify-between w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm hover:bg-white/10 transition-colors">
+                <span class="value-display flex items-center gap-2 truncate"></span>
+                <span class="material-symbols-outlined text-lg opacity-50">expand_more</span>
+            </button>
+            <div class="select-options hidden absolute top-full ${alignClass} min-w-full w-auto mt-1 bg-[#1a1f2e] border border-white/10 rounded-lg shadow-xl z-50 overflow-hidden backdrop-blur-xl animate-in fade-in zoom-in-95 duration-100">
+                <div class="select-options-content max-h-[400px] overflow-y-auto p-1 text-sm"></div>
+            </div>
+        `;
+
+        this.updateTrigger();
+        this.renderOptions(this.container.querySelector('.select-options-content'));
+
+        this.container.querySelector('.select-trigger').addEventListener('click', (e) => {
+            e.preventDefault();
+            this.toggle();
+        });
+    }
+
+    updateTrigger() {
+        const option = this.getSelectedOption();
+        const display = this.container.querySelector('.value-display');
+        display.innerHTML = this.renderLabel(option);
+    }
+
+    renderOptions(container) {
+        container.innerHTML = '';
+
+        this.options.forEach(opt => {
+            if (opt.group) {
+                const groupDiv = document.createElement('div');
+                groupDiv.className = 'py-1';
+                groupDiv.innerHTML = `<div class="px-2 py-1 text-xs font-bold text-text-secondary uppercase tracking-wider opacity-70 whitespace-nowrap">${opt.group}</div>`;
+
+                opt.options.forEach(subOpt => {
+                    groupDiv.appendChild(this.createOptionEl(subOpt));
+                });
+                container.appendChild(groupDiv);
+            } else {
+                container.appendChild(this.createOptionEl(opt));
+            }
+        });
+    }
+
+    createOptionEl(option) {
+        const btn = document.createElement('button');
+        btn.className = `w-full text-left px-2 py-1.5 rounded-md transition-colors flex items-center gap-2 whitespace-nowrap ${this.value === option.value ? 'bg-primary/20 text-white' : 'text-text-secondary hover:bg-white/5 hover:text-white'}`;
+        btn.innerHTML = this.renderLabel(option);
+        btn.onclick = (e) => {
+            e.stopPropagation();
+            this.setValue(option.value);
+        };
+        return btn;
+    }
+}
+
+// Global Instances
+let modeSelectInstance, providerSelectInstance, modelSelectInstance;
+
+// ========== INITIALIZATION ==========
 document.addEventListener('DOMContentLoaded', () => {
     loadSettings();
     loadStats();
@@ -74,18 +237,85 @@ document.addEventListener('DOMContentLoaded', () => {
     loadSessions();
     loadSpecialists();
     setupEventListeners();
-    updateModels();
+
+    // Initialize Custom Selects
+    initCustomSelects();
+
+    updateModels(); // Will use instance now
     navigateTo('dashboard');
 });
 
+function initCustomSelects() {
+    // 1. MODE SELECT
+    const modeOptions = [
+        {
+            group: 'Podstawowe', options: [
+                { value: 'council', label: 'Narada', emoji: '🏛️' },
+                { value: 'debate', label: 'Debata', emoji: '⚔️' },
+                { value: 'mentors', label: 'Ikony & Mentorzy', emoji: '🌟' }
+            ]
+        },
+        {
+            group: 'Zaawansowane', options: [
+                { value: 'deep_dive', label: 'Deep Dive', emoji: '🔬' },
+                { value: 'speed_round', label: 'Speed Round', emoji: '⚡' },
+                { value: 'devils_advocate', label: 'Devil\'s Advocate', emoji: '🎯' },
+                { value: 'swot', label: 'SWOT Analysis', emoji: '📊' },
+                { value: 'red_team', label: 'Red Team', emoji: '🔄' }
+            ]
+        }
+    ];
+
+    modeSelectInstance = new CustomSelect({
+        containerId: 'mode-select-container',
+        options: modeOptions,
+        initialValue: currentMode,
+        renderLabel: (opt) => `<span class="opacity-80">${opt.emoji}</span> <span>${opt.label}</span>`,
+        onChange: (val) => setMode(val)
+    });
+
+    // 2. PROVIDER SELECT
+    const providerOptions = [
+        { value: 'openai', label: 'OpenAI', emoji: '🤖' },
+        { value: 'grok', label: 'Grok', emoji: '🚀' },
+        { value: 'gemini', label: 'Gemini', emoji: '💎' },
+        { value: 'deepseek', label: 'DeepSeek', emoji: '🧠' }
+    ];
+
+    providerSelectInstance = new CustomSelect({
+        containerId: 'provider-select-container',
+        options: providerOptions,
+        initialValue: currentProvider,
+        renderLabel: (opt) => opt ? `<span class="opacity-80">${opt.emoji}</span> <span class="hidden sm:inline">${opt.label}</span>` : '?',
+        onChange: (val) => {
+            currentProvider = val;
+            updateModels();
+            updateStatDisplay();
+        },
+        align: 'right'
+    });
+
+    // 3. MODEL SELECT (Empty initially, filled by updateModels)
+    modelSelectInstance = new CustomSelect({
+        containerId: 'model-select-container',
+        options: [],
+        initialValue: currentModel,
+        renderLabel: (opt) => {
+            if (!opt) return '?';
+            const cost = TOKEN_COSTS[opt.value];
+            const costBadge = cost ? `<span class="ml-auto text-xs opacity-50">$${cost}</span>` : '';
+            return `<span class="truncate">${opt.label}</span> ${costBadge}`;
+        },
+        onChange: (val) => currentModel = val,
+        align: 'right'
+    });
+}
+
+// Patch setupEventListeners to skip missing elements
 function setupEventListeners() {
     if (queryForm) queryForm.addEventListener('submit', handleSubmit);
-    if (providerSelect) providerSelect.addEventListener('change', (e) => {
-        currentProvider = e.target.value;
-        updateModels();
-        updateStatDisplay();
-    });
-    if (modelSelect) modelSelect.addEventListener('change', (e) => currentModel = e.target.value);
+    // Provider/Model listeners handled by CustomSelect now
+
     if (fileInput) fileInput.addEventListener('change', handleFileSelect);
     if (queryInput) {
         queryInput.addEventListener('input', autoResize);
@@ -348,10 +578,19 @@ function saveSettings() {
     // Apply settings
     currentProvider = settings.defaultProvider;
     currentModel = settings.defaultModel;
-    providerSelect.value = currentProvider;
+
+    // Update custom selects
+    if (typeof providerSelectInstance !== 'undefined' && providerSelectInstance) {
+        providerSelectInstance.setValue(currentProvider, false);
+    }
+
     updateModels();
-    modelSelect.value = currentModel;
-    kbToggle.checked = settings.kbDefault;
+
+    if (typeof modelSelectInstance !== 'undefined' && modelSelectInstance) {
+        modelSelectInstance.setValue(currentModel, false);
+    }
+
+    if (kbToggle) kbToggle.checked = settings.kbDefault;
 }
 
 function loadSettings() {
@@ -393,10 +632,15 @@ function togglePasswordVisibility(inputId) {
 // ========== MODEL FUNCTIONS ==========
 function updateModels() {
     const models = MODELS[currentProvider] || [];
-    if (modelSelect) {
-        modelSelect.innerHTML = models.map(m => `<option value="${m}">${m}</option>`).join('');
-        if (!models.includes(currentModel)) currentModel = models[0];
-        modelSelect.value = currentModel;
+
+    if (modelSelectInstance) {
+        const options = models.map(m => ({ value: m, label: m }));
+        modelSelectInstance.setOptions(options);
+
+        if (!models.includes(currentModel)) {
+            currentModel = models[0];
+            modelSelectInstance.setValue(currentModel, false); // Don't trigger change callback to avoid loop
+        }
     }
 }
 
@@ -462,8 +706,12 @@ async function handleSubmit(e) {
     queryText.textContent = query;
     queryDisplay.classList.remove('hidden');
 
-    // Choose mode: Council, Debate, or Mentors
-    if (currentMode === 'mentors') {
+    // Advanced modes use dedicated API
+    const advancedModes = ['deep_dive', 'speed_round', 'devils_advocate', 'swot', 'red_team'];
+
+    if (advancedModes.includes(currentMode)) {
+        advancedModeStream(query, currentMode);
+    } else if (currentMode === 'mentors') {
         mentorsStream(query);
     } else if (currentMode === 'debate') {
         debateStream(query);
@@ -475,6 +723,141 @@ async function handleSubmit(e) {
     attachmentText = '';
     fileIndicator.classList.add('hidden');
     autoResize();
+}
+
+// ========== ADVANCED MODES (SWOT, Deep Dive, etc.) ==========
+function advancedModeStream(query, mode) {
+    const params = new URLSearchParams({
+        mode: mode,
+        query: query,
+        provider: currentProvider,
+        model: currentModel
+    });
+
+    streamingAgentResponses = {};
+    showStreamingUI();
+
+    streamingEventSource = new EventSource(`/api/council/mode/stream?${params}`);
+
+    streamingEventSource.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+
+        switch (data.event) {
+            case 'sources':
+                handleSources(data.sources);
+                break;
+
+            case 'mode_start':
+                showToast(`${data.emoji} ${data.mode} rozpoczęty`, 'info');
+                break;
+
+            case 'round_start':
+                handleRoundStart(data.round, data.type, data.title);
+                break;
+
+            case 'agent_start':
+                handleAdvancedAgentStart(data.agent, data.emoji, data.role, data.round);
+                break;
+
+            case 'delta':
+                handleDelta(data.agent, data.content);
+                break;
+
+            case 'agent_done':
+                handleAgentDone(data.agent);
+                break;
+
+            case 'round_done':
+                // Round completed
+                break;
+
+            case 'complete':
+                handleAdvancedComplete(data.total_rounds, data.total_agents);
+                streamingEventSource.close();
+                streamingEventSource = null;
+                break;
+
+            case 'error':
+                showToast('Błąd: ' + data.message, 'error');
+                streamingEventSource.close();
+                streamingEventSource = null;
+                showWelcome();
+                break;
+        }
+    };
+
+    streamingEventSource.onerror = (error) => {
+        console.error('Advanced mode SSE Error:', error);
+        streamingEventSource.close();
+        streamingEventSource = null;
+        showToast('Połączenie przerwane', 'error');
+    };
+}
+
+function handleAdvancedAgentStart(agentName, emoji, role, round) {
+    const placeholder = tabContents.querySelector('.streaming-placeholder');
+    if (placeholder) placeholder.remove();
+
+    streamingAgentResponses[agentName] = { emoji: emoji || '🎯', role: role || 'Agent', content: '' };
+
+    // Add tab button
+    const tabBtn = document.createElement('button');
+    tabBtn.className = 'tab-button flex items-center gap-2 px-4 py-2 rounded-t-lg text-sm font-medium transition-colors active';
+    tabBtn.dataset.tab = agentName;
+    tabBtn.innerHTML = `
+        <span class="text-lg">${emoji || '🎯'}</span>
+        <span>${agentName}</span>
+        <span class="typing-indicator ml-1"></span>
+    `;
+    tabBtn.onclick = () => switchTab(agentName);
+
+    agentTabs.querySelectorAll('.tab-button').forEach(btn => btn.classList.remove('active'));
+    agentTabs.appendChild(tabBtn);
+
+    // Add content area
+    const contentDiv = document.createElement('div');
+    contentDiv.className = 'tab-content active';
+    contentDiv.id = `tab-${agentName}`;
+    contentDiv.innerHTML = `
+        <div class="agent-card">
+            <div class="agent-card-header">
+                <div class="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center text-2xl">
+                    ${emoji || '🎯'}
+                </div>
+                <div>
+                    <h3 class="font-bold text-sm text-white">${emoji || '🎯'} ${agentName}</h3>
+                    <p class="text-[10px] text-text-secondary uppercase tracking-wide">${role || 'Agent'}${round ? ' • Runda ' + round : ''}</p>
+                </div>
+                <span class="ml-auto text-xs font-mono text-primary bg-primary/10 px-2 py-0.5 rounded streaming-badge">
+                    <span class="animate-pulse">●</span> Streaming
+                </span>
+            </div>
+            <div class="agent-content font-body streaming-content" id="content-${agentName}"><span class="typing-cursor"></span></div>
+        </div>
+    `;
+
+    tabContents.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+    tabContents.appendChild(contentDiv);
+}
+
+function handleAdvancedComplete(totalRounds, totalAgents) {
+    const agentResponses = Object.entries(streamingAgentResponses).map(([name, data]) => ({
+        agent_name: `${data.emoji} ${name}`,
+        role: data.role,
+        content: data.content,
+        provider_used: `${currentProvider} (${currentModel})`
+    }));
+
+    lastResult = {
+        query: queryText.textContent,
+        timestamp: new Date().toISOString(),
+        agent_responses: agentResponses,
+        synthesis: null,
+        sources: []
+    };
+
+    saveCurrentSession(queryText.textContent);
+    showToast(`Zakończono! ${totalRounds || '?'} rund, ${totalAgents || '?'} agentów`, 'success');
 }
 
 // ========== MENTORS (ICONS) MODE ==========
@@ -1135,41 +1518,33 @@ function setMode(mode) {
     currentMode = mode;
     debateMode = (mode === 'debate');
 
-    const councilBtn = document.getElementById('mode-council');
-    const debateBtn = document.getElementById('mode-debate');
-    const mentorsBtn = document.getElementById('mode-mentors');
-
-    // Update button states
-    [councilBtn, debateBtn, mentorsBtn].forEach(btn => {
-        if (btn) btn.classList.remove('active');
-    });
-
-    if (mode === 'council' && councilBtn) councilBtn.classList.add('active');
-    if (mode === 'debate' && debateBtn) debateBtn.classList.add('active');
-    if (mode === 'mentors' && mentorsBtn) mentorsBtn.classList.add('active');
+    // Update custom dropdown if instance exists
+    if (typeof modeSelectInstance !== 'undefined' && modeSelectInstance) {
+        modeSelectInstance.setValue(mode, false);
+    }
 
     // Update header text
     const headerTitle = document.getElementById('main-title');
     const titles = {
         'council': '🏛️ Narada Rady AI',
         'debate': '⚔️ Debata Rady AI',
-        'mentors': '🌟 Ikony & Mentorzy'
+        'mentors': '🌟 Ikony & Mentorzy',
+        'deep_dive': '🔬 Deep Dive',
+        'speed_round': '⚡ Speed Round',
+        'devils_advocate': '🎯 Devil\'s Advocate',
+        'swot': '📊 Analiza SWOT',
+        'red_team': '🔄 Red Team'
     };
     if (headerTitle) headerTitle.textContent = titles[mode] || titles.council;
 
-    // Show mentor selector for mentors mode
+    // Show mentor selector only for mentors mode
     if (mode === 'mentors') {
         loadMentorsSelector();
     } else {
         hideMentorsSelector();
     }
 
-    const toastMsgs = {
-        'council': 'Tryb narady',
-        'debate': 'Tryb debaty',
-        'mentors': 'Tryb: Ikony & Mentorzy'
-    };
-    showToast(toastMsgs[mode] || 'Tryb zmieniony', 'info');
+    showToast(`Tryb: ${titles[mode] || mode}`, 'info');
 }
 
 async function loadMentorsSelector() {
