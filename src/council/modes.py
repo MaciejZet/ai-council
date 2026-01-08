@@ -393,13 +393,13 @@ Stwórz podsumowanie tej analizy SWOT. Wskaż:
         yield self._sse("complete", {"total_rounds": 5, "total_agents": 5})
 
 
-# ========== 🔄 RED TEAM ==========
+# ========== 🧐 KRYTYK (Business Validation) ==========
 class RedTeamMode(CouncilMode):
-    """Próba 'złamania' pomysłu użytkownika"""
+    """Krytyczna weryfikacja biznesowa pomysłu/strategii"""
     
     name = "red_team"
-    emoji = "🔄"
-    description = "Red Team - próba złamania Twojego pomysłu"
+    emoji = "🧐"
+    description = "Krytyk - bezlitosna weryfikacja Twojego pomysłu"
     
     async def run_stream(
         self, 
@@ -412,17 +412,83 @@ class RedTeamMode(CouncilMode):
         yield self._sse("sources", {"sources": sources})
         yield self._sse("mode_start", {"mode": self.name, "emoji": self.emoji})
         
-        # Runda 1-3: Ataki
-        attacks = [
-            ("Haker", "🔓", "Luki bezpieczeństwa", "Znajdź luki, exploity, sposoby na obejście. Co można złamać?"),
-            ("Sabotażysta", "💥", "Punkty awarii", "Co może się zepsuć? Jakie są single points of failure? Co jeśli X zawiedzie?"),
-            ("Konkurent", "🎭", "Kontratak rynkowy", "Jak konkurencja może to skopiować lub pokonać? Jakie są słabości rynkowe?"),
+        # === RUNDA 1: Zrozumienie pomysłu ===
+        yield self._sse("round_start", {"round": 1, "title": "Analiza pomysłu", "type": "analysis"})
+        yield self._sse("agent_start", {
+            "agent": "Moderator",
+            "emoji": "📋",
+            "role": "Podsumowanie pomysłu",
+            "round": 1
+        })
+        
+        summary_content = ""
+        async for token in llm.generate_stream(
+            system_prompt="Jesteś moderatorem Red Team. Podsumuj pomysł użytkownika w kilku punktach, identyfikując kluczowe założenia, które wymagają weryfikacji.",
+            user_prompt=f"""Pomysł/strategia do weryfikacji: {query}
+
+Kontekst: {chr(10).join(context[:2]) if context else "(brak)"}
+
+Streść pomysł i wylistuj 3-5 KLUCZOWYCH ZAŁOŻEŃ, które zespół Red Team powinien przetestować.""",
+            temperature=0.6
+        ):
+            summary_content += token
+            yield self._sse("delta", {"agent": "Moderator", "content": token})
+        
+        yield self._sse("agent_done", {"agent": "Moderator"})
+        yield self._sse("round_done", {"round": 1})
+        
+        # === RUNDY 2-6: Ataki biznesowe ===
+        red_team_members = [
+            ("Inwestor-Sceptyk", "💰", "Due Diligence", 
+             """Jesteś doświadczonym inwestorem VC/PE. Widziałeś setki pitch decków.
+Twoim zadaniem jest ZNALEŹĆ SŁABOŚCI tego pomysłu z perspektywy inwestycyjnej:
+- Czy model biznesowy ma sens? 
+- Czy unit economics się zgadzają?
+- Czy to jest skalowalny biznes?
+- Jakie są red flags dla inwestora?
+- Dlaczego mógłbym NIE zainwestować?"""),
+
+            ("Klient-Sceptyk", "🛒", "Voice of Customer",
+             """Jesteś wymagającym, sceptycznym potencjalnym klientem.
+Twoim zadaniem jest zakwestionować WARTOŚĆ dla klienta:
+- Dlaczego miałbym to kupić/używać?
+- Co mnie powstrzymuje?
+- Jakie mam alternatywy (w tym: nic nie robić)?
+- Czy cena jest uzasadniona?
+- Jakie są moje obawy i wątpliwości?"""),
+
+            ("Doświadczony Przedsiębiorca", "🎯", "Reality Check",
+             """Jesteś przedsiębiorcą, który zbudował i sprzedał kilka firm. Znasz realia.
+Twoim zadaniem jest pokazać PRAKTYCZNE PROBLEMY:
+- Co może pójść nie tak operacyjnie?
+- Gdzie są ukryte koszty i komplikacje?
+- Jakie zasoby są NAPRAWDĘ potrzebne?
+- Jakie błędy popełniają nowicjusze w tej branży?
+- Co ty byś zrobił inaczej?"""),
+
+            ("Analityk Rynku", "📊", "Market Reality",
+             """Jesteś analitykiem rynku z 15-letnim doświadczeniem.
+Twoim zadaniem jest ZWERYFIKOWAĆ ZAŁOŻENIA RYNKOWE:
+- Czy rynek jest wystarczająco duży (TAM/SAM/SOM)?
+- Jaka jest prawdziwa konkurencja?
+- Czy timing jest odpowiedni?
+- Jakie trendy mogą pomóc lub zaszkodzić?
+- Jakie są bariery wejścia?"""),
+
+            ("Konkurent", "🎭", "Competitive Response",
+             """Jesteś CEO głównego konkurenta w tej branży.
+Właśnie dowiedziałeś się o tym pomyśle. Twoja reakcja:
+- Jak bym skopiował/ulepszył ten pomysł?
+- Jakie mam przewagi, których oni nie mają?
+- Jak bym ich zniszczył lub zablokował?
+- Gdzie widzę ich słabości?
+- Co bym im powiedział, żeby się poddali?"""),
         ]
         
-        all_attacks = []
+        all_critiques = []
         
-        for i, (name, emoji, role, instruction) in enumerate(attacks, 1):
-            yield self._sse("round_start", {"round": i, "title": f"Atak #{i}: {role}", "type": "attack"})
+        for i, (name, emoji, role, system_prompt) in enumerate(red_team_members, 2):
+            yield self._sse("round_start", {"round": i, "title": f"🔴 {role}", "type": "attack"})
             yield self._sse("agent_start", {
                 "agent": name,
                 "emoji": emoji,
@@ -430,74 +496,103 @@ class RedTeamMode(CouncilMode):
                 "round": i
             })
             
-            prompt = f"""Cel ataku: {query}
+            user_prompt = f"""Pomysł do weryfikacji: {query}
 
-Twoim zadaniem jest próba "złamania" tego pomysłu.
-{instruction}
+Podsumowanie i założenia:
+{summary_content}
 
-Bądź kreatywny i bezlitosny. Znajdź wszystkie słabości."""
+Przeprowadź BEZLITOSNĄ, ale MERYTORYCZNĄ krytykę z Twojej perspektywy. 
+Bądź konkretny - podawaj przykłady, liczby, scenariusze.
+Twoja opinia może uratować kogoś przed kosztownym błędem."""
             
             agent_content = ""
             async for token in llm.generate_stream(
-                system_prompt=f"Jesteś {name} w Red Team. Twoim zadaniem jest znalezienie słabości i sposobów na złamanie systemu/pomysłu.",
-                user_prompt=prompt,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
                 temperature=0.8
             ):
                 agent_content += token
                 yield self._sse("delta", {"agent": name, "content": token})
             
-            all_attacks.append(f"## {name} ({role})\n{agent_content}")
+            all_critiques.append(f"### {emoji} {name} ({role})\n{agent_content}")
             yield self._sse("agent_done", {"agent": name})
             yield self._sse("round_done", {"round": i})
         
-        # Runda 4: Analiza podatności
-        yield self._sse("round_start", {"round": 4, "title": "Analiza podatności", "type": "analysis"})
+        # === RUNDA 7: Odpowiedź obrony ===
+        yield self._sse("round_start", {"round": 7, "title": "Odpowiedź na krytykę", "type": "defense"})
         yield self._sse("agent_start", {
-            "agent": "Analityk",
-            "emoji": "📋",
-            "role": "Raport podatności",
-            "round": 4
+            "agent": "Adwokat Pomysłu",
+            "emoji": "🛡️",
+            "role": "Obrona i odpowiedzi",
+            "round": 7
         })
         
-        analysis_prompt = f"""Cel: {query}
-
-Wyniki Red Team:
-{chr(10).join(all_attacks)}
-
-Stwórz raport podatności:
-1. Krytyczne słabości (wymagają natychmiastowej uwagi)
-2. Średnie słabości (do naprawy)
-3. Niskie ryzyko (do monitorowania)"""
-        
+        defense_content = ""
         async for token in llm.generate_stream(
-            system_prompt="Jesteś analitykiem bezpieczeństwa. Stwórz uporządkowany raport podatności.",
-            user_prompt=analysis_prompt,
-            temperature=0.6
-        ):
-            yield self._sse("delta", {"agent": "Analityk", "content": token})
-        
-        yield self._sse("agent_done", {"agent": "Analityk"})
-        yield self._sse("round_done", {"round": 4})
-        
-        # Runda 5: Rekomendacje naprawy
-        yield self._sse("round_start", {"round": 5, "title": "Plan naprawczy", "type": "fix"})
-        yield self._sse("agent_start", {
-            "agent": "Architekt",
-            "emoji": "🏗️",
-            "role": "Rekomendacje naprawy",
-            "round": 5
-        })
-        
-        async for token in llm.generate_stream(
-            system_prompt="Jesteś architektem rozwiązań. Zaproponuj konkretne naprawy dla znalezionych słabości.",
-            user_prompt=f"Słabości:\n{chr(10).join(all_attacks)}\n\nZaproponuj konkretne rozwiązania dla każdej słabości.",
+            system_prompt="""Jesteś obrońcą tego pomysłu. Przeczytaj wszystkie krytyki i:
+1. Przyznaj rację tam, gdzie krytyka jest słuszna
+2. Obroń to, co można obronić (z argumentami)
+3. Zaproponuj jak rozwiązać uzasadnione obawy
+4. Wskaż co wymaga dalszej analizy""",
+            user_prompt=f"""Pomysł: {query}
+
+Krytyki zespołu Red Team:
+{chr(10).join(all_critiques)}
+
+Odpowiedz na te zarzuty uczciwie i konstruktywnie.""",
             temperature=0.7
         ):
-            yield self._sse("delta", {"agent": "Architekt", "content": token})
+            defense_content += token
+            yield self._sse("delta", {"agent": "Adwokat Pomysłu", "content": token})
         
-        yield self._sse("agent_done", {"agent": "Architekt"})
-        yield self._sse("round_done", {"round": 5})
-        yield self._sse("complete", {"total_rounds": 5, "total_agents": 5})
+        yield self._sse("agent_done", {"agent": "Adwokat Pomysłu"})
+        yield self._sse("round_done", {"round": 7})
+        
+        # === RUNDA 8: Raport końcowy ===
+        yield self._sse("round_start", {"round": 8, "title": "Raport Red Team", "type": "report"})
+        yield self._sse("agent_start", {
+            "agent": "Raport Red Team",
+            "emoji": "📑",
+            "role": "Podsumowanie weryfikacji",
+            "round": 8
+        })
+        
+        async for token in llm.generate_stream(
+            system_prompt="""Jesteś lead'em zespołu Red Team. Stwórz profesjonalny raport końcowy.""",
+            user_prompt=f"""Pomysł: {query}
+
+Wszystkie krytyki:
+{chr(10).join(all_critiques)}
+
+Odpowiedź obrony:
+{defense_content}
+
+Stwórz RAPORT RED TEAM w formacie:
+
+## 🚨 Krytyczne Ryzyka (showstoppers)
+(Problemy, które mogą zabić projekt jeśli nie zostaną rozwiązane)
+
+## ⚠️ Istotne Wyzwania
+(Poważne problemy wymagające uwagi)
+
+## 💡 Sugestie Ulepszeń
+(Co warto przemyśleć/zmienić)
+
+## ✅ Mocne Strony
+(Co zostało pozytywnie zweryfikowane)
+
+## 📋 Następne Kroki
+(Co autor powinien zrobić dalej)
+
+## WERDYKT: [Proceed / Proceed with Changes / Pivot / Kill]
+(Z krótkim uzasadnieniem)""",
+            temperature=0.6
+        ):
+            yield self._sse("delta", {"agent": "Raport Red Team", "content": token})
+        
+        yield self._sse("agent_done", {"agent": "Raport Red Team"})
+        yield self._sse("round_done", {"round": 8})
+        yield self._sse("complete", {"total_rounds": 8, "total_agents": 7})
 
 
 # ========== REGISTRY ==========

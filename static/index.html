@@ -39,7 +39,7 @@
 <body
     class="bg-background-light dark:bg-background-dark text-slate-900 dark:text-white font-display overflow-hidden h-screen flex">
 
-    <!-- LEFT SIDEBAR -->
+    <!-- LEFT SIDEBAR (Sessions Only) -->
     <aside
         class="w-64 bg-white dark:bg-surface-darker border-r border-gray-200 dark:border-white/10 flex flex-col justify-between hidden md:flex shrink-0">
         <div class="flex flex-col h-full">
@@ -53,7 +53,7 @@
             </div>
 
             <!-- New Session Button -->
-            <div class="px-4 mb-6">
+            <div class="px-4 mb-4">
                 <button onclick="resetSession(); navigateTo('dashboard')"
                     class="w-full flex items-center justify-center gap-2 bg-primary hover:bg-primary-hover text-white py-3 px-4 rounded-lg font-medium transition-colors shadow-lg shadow-primary/20 group">
                     <span
@@ -62,69 +62,15 @@
                 </button>
             </div>
 
-            <!-- Navigation -->
-            <nav class="flex-1 px-3 space-y-1 overflow-y-auto">
-                <p class="px-3 text-xs font-semibold text-text-secondary uppercase tracking-wider mb-2 mt-2">Menu</p>
-                <a onclick="navigateTo('dashboard')"
-                    class="nav-link flex items-center gap-3 px-3 py-2.5 rounded-lg cursor-pointer transition-colors"
-                    data-page="dashboard">
-                    <span class="material-symbols-outlined">dashboard</span>
-                    Dashboard
-                </a>
-                <a onclick="navigateTo('history')"
-                    class="nav-link flex items-center gap-3 px-3 py-2.5 rounded-lg cursor-pointer transition-colors"
-                    data-page="history">
-                    <span class="material-symbols-outlined">history</span>
-                    Historia
-                </a>
-                <a onclick="navigateTo('agents')"
-                    class="nav-link flex items-center gap-3 px-3 py-2.5 rounded-lg cursor-pointer transition-colors"
-                    data-page="agents">
-                    <span class="material-symbols-outlined">group</span>
-                    Konfiguracja agentów
-                </a>
-                <a onclick="navigateTo('agent-builder')"
-                    class="nav-link flex items-center gap-3 px-3 py-2.5 rounded-lg cursor-pointer transition-colors"
-                    data-page="agent-builder">
-                    <span class="material-symbols-outlined">build</span>
-                    Kreator agentów
-                </a>
-                <a onclick="navigateTo('settings')"
-                    class="nav-link flex items-center gap-3 px-3 py-2.5 rounded-lg cursor-pointer transition-colors"
-                    data-page="settings">
-                    <span class="material-symbols-outlined">settings</span>
-                    Ustawienia
-                </a>
-                <a onclick="navigateTo('plugins')"
-                    class="nav-link flex items-center gap-3 px-3 py-2.5 rounded-lg cursor-pointer transition-colors"
-                    data-page="plugins">
-                    <span class="material-symbols-outlined">extension</span>
-                    Wtyczki
-                </a>
-
-                <!-- Knowledge Base -->
-                <p class="px-3 text-xs font-semibold text-text-secondary uppercase tracking-wider mb-2 mt-6">Baza wiedzy
-                </p>
-                <div id="kb-stats" class="px-3 py-2 text-sm text-text-secondary">
-                    <span class="material-symbols-outlined text-[16px] align-middle">database</span>
-                    <span id="kb-vectors">Ładowanie...</span>
-                </div>
-                <button id="pdf-import-btn"
-                    class="w-full flex items-center gap-2 px-3 py-2 text-sm text-text-secondary hover:bg-slate-100 dark:hover:bg-white/5 rounded-lg transition-colors">
-                    <span class="material-symbols-outlined text-[18px]">upload_file</span>
-                    <span>Import PDF do bazy</span>
-                </button>
-                <input type="file" id="pdf-import-input" accept=".pdf" class="hidden">
-
-                <!-- Recent Sessions -->
-                <p class="px-3 text-xs font-semibold text-text-secondary uppercase tracking-wider mb-2 mt-6">Ostatnie
-                    sesje</p>
+            <!-- Sessions List -->
+            <nav class="flex-1 px-3 overflow-y-auto">
+                <p class="px-3 text-xs font-semibold text-text-secondary uppercase tracking-wider mb-2">Sesje</p>
                 <div id="recent-sessions" class="space-y-0.5">
                     <p class="px-3 text-xs text-text-secondary/50 italic">Brak zapisanych sesji</p>
                 </div>
             </nav>
 
-            <!-- User Profile -->
+            <!-- User Profile + Settings Button -->
             <div class="p-4 border-t border-gray-200 dark:border-white/10">
                 <div class="flex items-center gap-3 p-2">
                     <div
@@ -134,6 +80,11 @@
                         <p class="text-sm font-medium text-slate-900 dark:text-white truncate">Użytkownik</p>
                         <p class="text-xs text-text-secondary truncate">AI Council v2.0</p>
                     </div>
+                    <button onclick="openSettingsPanel()"
+                        class="p-2 text-text-secondary hover:text-white hover:bg-white/10 rounded-lg transition-colors"
+                        title="Ustawienia">
+                        <span class="material-symbols-outlined text-[20px]">settings</span>
+                    </button>
                 </div>
             </div>
         </div>
@@ -895,6 +846,241 @@
                     class="px-4 py-2 border border-gray-200 dark:border-white/10 rounded-lg text-sm">Anuluj</button>
                 <button onclick="addSpecialist()"
                     class="px-4 py-2 bg-primary hover:bg-primary-hover text-white rounded-lg text-sm font-medium">Dodaj</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ========== SETTINGS PANEL (Slide-out) ========== -->
+    <div id="settings-panel" class="hidden fixed inset-0 z-50">
+        <!-- Backdrop -->
+        <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" onclick="closeSettingsPanel()"></div>
+
+        <!-- Panel -->
+        <div
+            class="absolute right-0 top-0 h-full w-full max-w-2xl bg-white dark:bg-surface-darker border-l border-gray-200 dark:border-white/10 shadow-2xl flex flex-col animate-in slide-in-from-right duration-200">
+            <!-- Header -->
+            <div
+                class="h-16 border-b border-gray-200 dark:border-white/10 flex items-center justify-between px-6 shrink-0">
+                <h2 class="text-lg font-bold flex items-center gap-2">
+                    <span class="material-symbols-outlined text-primary">settings</span>
+                    Ustawienia
+                </h2>
+                <button onclick="closeSettingsPanel()"
+                    class="p-2 text-text-secondary hover:text-white hover:bg-white/10 rounded-lg transition-colors">
+                    <span class="material-symbols-outlined">close</span>
+                </button>
+            </div>
+
+            <!-- Tab Navigation -->
+            <div class="border-b border-gray-200 dark:border-white/10 px-4">
+                <nav class="flex gap-1 -mb-px overflow-x-auto" id="settings-tabs">
+                    <button onclick="setSettingsTab('dashboard')"
+                        class="settings-tab active px-4 py-3 text-sm font-medium border-b-2 border-transparent whitespace-nowrap"
+                        data-tab="dashboard">
+                        <span class="material-symbols-outlined text-[18px] align-middle mr-1">dashboard</span>
+                        Dashboard
+                    </button>
+                    <button onclick="setSettingsTab('agents')"
+                        class="settings-tab px-4 py-3 text-sm font-medium border-b-2 border-transparent whitespace-nowrap"
+                        data-tab="agents">
+                        <span class="material-symbols-outlined text-[18px] align-middle mr-1">group</span>
+                        Agenci
+                    </button>
+                    <button onclick="setSettingsTab('knowledge')"
+                        class="settings-tab px-4 py-3 text-sm font-medium border-b-2 border-transparent whitespace-nowrap"
+                        data-tab="knowledge">
+                        <span class="material-symbols-outlined text-[18px] align-middle mr-1">database</span>
+                        Baza Wiedzy
+                    </button>
+                    <button onclick="setSettingsTab('plugins')"
+                        class="settings-tab px-4 py-3 text-sm font-medium border-b-2 border-transparent whitespace-nowrap"
+                        data-tab="plugins">
+                        <span class="material-symbols-outlined text-[18px] align-middle mr-1">extension</span>
+                        Wtyczki
+                    </button>
+                    <button onclick="setSettingsTab('config')"
+                        class="settings-tab px-4 py-3 text-sm font-medium border-b-2 border-transparent whitespace-nowrap"
+                        data-tab="config">
+                        <span class="material-symbols-outlined text-[18px] align-middle mr-1">tune</span>
+                        Konfiguracja
+                    </button>
+                </nav>
+            </div>
+
+            <!-- Tab Content -->
+            <div class="flex-1 overflow-y-auto p-6">
+                <!-- Dashboard Tab -->
+                <div id="settings-tab-dashboard" class="settings-tab-content">
+                    <h3 class="text-lg font-bold mb-4">📊 Dashboard</h3>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div class="bg-white/5 border border-white/10 rounded-xl p-4">
+                            <p class="text-xs text-text-secondary uppercase tracking-wider mb-1">Sesje</p>
+                            <p class="text-2xl font-bold" id="settings-stat-sessions">0</p>
+                        </div>
+                        <div class="bg-white/5 border border-white/10 rounded-xl p-4">
+                            <p class="text-xs text-text-secondary uppercase tracking-wider mb-1">Tokeny</p>
+                            <p class="text-2xl font-bold" id="settings-stat-tokens">0</p>
+                        </div>
+                        <div class="bg-white/5 border border-white/10 rounded-xl p-4">
+                            <p class="text-xs text-text-secondary uppercase tracking-wider mb-1">Baza Wiedzy</p>
+                            <p class="text-2xl font-bold" id="settings-stat-kb">0</p>
+                        </div>
+                        <div class="bg-white/5 border border-white/10 rounded-xl p-4">
+                            <p class="text-xs text-text-secondary uppercase tracking-wider mb-1">Koszt</p>
+                            <p class="text-2xl font-bold" id="settings-stat-cost">$0.00</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Agents Tab -->
+                <div id="settings-tab-agents" class="settings-tab-content hidden">
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="text-lg font-bold">👥 Konfiguracja Agentów</h3>
+                        <button onclick="showAddSpecialistModal()"
+                            class="flex items-center gap-1 px-3 py-1.5 bg-primary hover:bg-primary-hover text-white rounded-lg text-sm font-medium transition-colors">
+                            <span class="material-symbols-outlined text-[18px]">add</span>
+                            Dodaj
+                        </button>
+                    </div>
+                    <div id="settings-agents-grid" class="grid gap-3">
+                        <!-- Agents loaded dynamically -->
+                    </div>
+                </div>
+
+                <!-- Knowledge Base Tab -->
+                <div id="settings-tab-knowledge" class="settings-tab-content hidden">
+                    <h3 class="text-lg font-bold mb-4">📚 Baza Wiedzy</h3>
+                    <div class="bg-white/5 border border-white/10 rounded-xl p-6 mb-4">
+                        <div class="flex items-center gap-4 mb-4">
+                            <div class="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center">
+                                <span class="material-symbols-outlined text-2xl text-primary">database</span>
+                            </div>
+                            <div>
+                                <p class="text-2xl font-bold" id="settings-kb-vectors">0</p>
+                                <p class="text-sm text-text-secondary">wektorów w bazie</p>
+                            </div>
+                        </div>
+                        <div class="border-t border-white/10 pt-4">
+                            <label
+                                class="flex items-center gap-3 p-4 border-2 border-dashed border-white/20 rounded-xl hover:border-primary/50 cursor-pointer transition-colors">
+                                <span class="material-symbols-outlined text-2xl text-text-secondary">upload_file</span>
+                                <div>
+                                    <p class="font-medium">Import PDF</p>
+                                    <p class="text-sm text-text-secondary">Kliknij aby dodać pliki do bazy wiedzy</p>
+                                </div>
+                                <input type="file" id="settings-pdf-input" accept=".pdf" class="hidden"
+                                    onchange="handleSettingsPdfImport(event)">
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Plugins Tab -->
+                <div id="settings-tab-plugins" class="settings-tab-content hidden">
+                    <h3 class="text-lg font-bold mb-4">🧩 Wtyczki</h3>
+                    <div class="space-y-3" id="settings-plugins-list">
+                        <div class="bg-white/5 border border-white/10 rounded-xl p-4 flex items-center justify-between">
+                            <div class="flex items-center gap-3">
+                                <div class="w-10 h-10 rounded-lg bg-blue-500/10 flex items-center justify-center">
+                                    <span class="material-symbols-outlined text-blue-500">auto_awesome</span>
+                                </div>
+                                <div>
+                                    <p class="font-medium">AI Summarizer</p>
+                                    <p class="text-xs text-text-secondary">Automatyczne podsumowania</p>
+                                </div>
+                            </div>
+                            <label class="relative inline-flex items-center cursor-pointer">
+                                <input type="checkbox" class="sr-only peer" checked>
+                                <div
+                                    class="w-11 h-6 bg-gray-200 rounded-full peer dark:bg-gray-700 peer-checked:bg-primary after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full">
+                                </div>
+                            </label>
+                        </div>
+                        <div
+                            class="bg-white/5 border border-white/10 rounded-xl p-4 flex items-center justify-between opacity-50">
+                            <div class="flex items-center gap-3">
+                                <div class="w-10 h-10 rounded-lg bg-green-500/10 flex items-center justify-center">
+                                    <span class="material-symbols-outlined text-green-500">translate</span>
+                                </div>
+                                <div>
+                                    <p class="font-medium">Multi-Language</p>
+                                    <p class="text-xs text-text-secondary">Wkrótce dostępne</p>
+                                </div>
+                            </div>
+                            <span class="text-xs bg-white/10 px-2 py-1 rounded-full">Soon</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Config Tab -->
+                <div id="settings-tab-config" class="settings-tab-content hidden">
+                    <h3 class="text-lg font-bold mb-4">⚙️ Konfiguracja Aplikacji</h3>
+                    <div class="space-y-6">
+                        <!-- Default Provider -->
+                        <div>
+                            <label class="block text-sm text-text-secondary mb-2">Domyślny dostawca LLM</label>
+                            <select id="setting-default-provider"
+                                class="w-full bg-white dark:bg-black/20 border border-gray-200 dark:border-white/10 rounded-lg px-3 py-2">
+                                <option value="openai">OpenAI</option>
+                                <option value="grok">Grok</option>
+                                <option value="gemini">Gemini</option>
+                                <option value="deepseek">DeepSeek</option>
+                            </select>
+                        </div>
+                        <!-- Default Model -->
+                        <div>
+                            <label class="block text-sm text-text-secondary mb-2">Domyślny model</label>
+                            <select id="setting-default-model"
+                                class="w-full bg-white dark:bg-black/20 border border-gray-200 dark:border-white/10 rounded-lg px-3 py-2">
+                                <option value="gpt-4o">gpt-4o</option>
+                                <option value="gpt-4o-mini">gpt-4o-mini</option>
+                            </select>
+                        </div>
+                        <!-- Temperature -->
+                        <div>
+                            <label class="block text-sm text-text-secondary mb-2">Temperatura: <span
+                                    id="temp-value">0.7</span></label>
+                            <input type="range" id="setting-temperature" min="0" max="100" value="70" class="w-full">
+                        </div>
+                        <!-- KB Toggle -->
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <p class="font-medium">Domyślnie używaj bazy wiedzy</p>
+                                <p class="text-sm text-text-secondary">Automatycznie wyszukuj kontekst</p>
+                            </div>
+                            <label class="relative inline-flex items-center cursor-pointer">
+                                <input type="checkbox" id="setting-kb-default" class="sr-only peer" checked>
+                                <div
+                                    class="w-11 h-6 bg-gray-200 rounded-full peer dark:bg-gray-700 peer-checked:bg-primary after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full">
+                                </div>
+                            </label>
+                        </div>
+                        <!-- Show Sources -->
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <p class="font-medium">Pokazuj źródła</p>
+                                <p class="text-sm text-text-secondary">Wyświetlaj źródła z bazy wiedzy</p>
+                            </div>
+                            <label class="relative inline-flex items-center cursor-pointer">
+                                <input type="checkbox" id="setting-show-sources" class="sr-only peer" checked>
+                                <div
+                                    class="w-11 h-6 bg-gray-200 rounded-full peer dark:bg-gray-700 peer-checked:bg-primary after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full">
+                                </div>
+                            </label>
+                        </div>
+                        <!-- Save Button -->
+                        <div class="pt-4 border-t border-white/10 flex gap-3">
+                            <button onclick="saveSettings()"
+                                class="flex-1 bg-primary hover:bg-primary-hover text-white py-2.5 rounded-lg font-medium transition-colors">
+                                Zapisz ustawienia
+                            </button>
+                            <button onclick="resetSettings()"
+                                class="px-4 py-2.5 border border-white/10 rounded-lg text-text-secondary hover:text-white transition-colors">
+                                Reset
+                            </button>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>

@@ -384,3 +384,37 @@
     padding: 0;
     margin: 0;
 }
+
+/* ========== SETTINGS PANEL ========== */
+.settings-tab {
+    color: #a29db8;
+    border-bottom: 2px solid transparent;
+    transition: all 0.2s;
+}
+
+.settings-tab:hover {
+    color: white;
+}
+
+.settings-tab.active {
+    color: white;
+    border-bottom-color: #3b19e6;
+}
+
+.settings-tab-content {
+    animation: fadeIn 0.2s ease-out;
+}
+
+/* Slide-in animation for panel */
+@keyframes slideInFromRight {
+    from {
+        transform: translateX(100%);
+    }
+    to {
+        transform: translateX(0);
+    }
+}
+
+#settings-panel > div:last-child {
+    animation: slideInFromRight 0.2s ease-out;
+}

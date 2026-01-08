@@ -261,7 +261,7 @@ function initCustomSelects() {
                 { value: 'speed_round', label: 'Speed Round', emoji: '⚡' },
                 { value: 'devils_advocate', label: 'Devil\'s Advocate', emoji: '🎯' },
                 { value: 'swot', label: 'SWOT Analysis', emoji: '📊' },
-                { value: 'red_team', label: 'Red Team', emoji: '🔄' }
+                { value: 'red_team', label: 'Krytyk', emoji: '🧐' }
             ]
         }
     ];
@@ -627,6 +627,181 @@ function setTheme(theme) {
 function togglePasswordVisibility(inputId) {
     const input = document.getElementById(inputId);
     input.type = input.type === 'password' ? 'text' : 'password';
+}
+
+// ========== SETTINGS PANEL ==========
+let currentSettingsTab = 'dashboard';
+
+function openSettingsPanel() {
+    const panel = document.getElementById('settings-panel');
+    if (panel) {
+        panel.classList.remove('hidden');
+        loadSettingsContent();
+    }
+}
+
+function closeSettingsPanel() {
+    const panel = document.getElementById('settings-panel');
+    if (panel) {
+        panel.classList.add('hidden');
+    }
+}
+
+function setSettingsTab(tabName) {
+    currentSettingsTab = tabName;
+
+    // Update tab buttons
+    document.querySelectorAll('.settings-tab').forEach(tab => {
+        const isActive = tab.dataset.tab === tabName;
+        tab.classList.toggle('active', isActive);
+        tab.classList.toggle('border-primary', isActive);
+        tab.classList.toggle('text-white', isActive);
+        tab.classList.toggle('text-text-secondary', !isActive);
+    });
+
+    // Update tab content
+    document.querySelectorAll('.settings-tab-content').forEach(content => {
+        content.classList.add('hidden');
+    });
+    const activeContent = document.getElementById(`settings-tab-${tabName}`);
+    if (activeContent) {
+        activeContent.classList.remove('hidden');
+    }
+
+    // Load tab-specific content
+    if (tabName === 'agents') loadSettingsAgents();
+    if (tabName === 'knowledge') loadSettingsKnowledge();
+    if (tabName === 'dashboard') updateSettingsStats();
+}
+
+function loadSettingsContent() {
+    updateSettingsStats();
+    setSettingsTab('dashboard');
+}
+
+function updateSettingsStats() {
+    // Sessions count
+    const sessionsCount = sessions.length;
+    const sessionsEl = document.getElementById('settings-stat-sessions');
+    if (sessionsEl) sessionsEl.textContent = sessionsCount;
+
+    // Tokens
+    const tokensEl = document.getElementById('settings-stat-tokens');
+    if (tokensEl) tokensEl.textContent = totalTokensUsed.toLocaleString();
+
+    // Cost
+    const costEl = document.getElementById('settings-stat-cost');
+    if (costEl) costEl.textContent = `$${estimatedCost.toFixed(2)}`;
+
+    // KB vectors
+    fetch('/api/stats')
+        .then(r => r.json())
+        .then(stats => {
+            const kbEl = document.getElementById('settings-stat-kb');
+            if (kbEl) kbEl.textContent = (stats.total_vectors || 0).toLocaleString();
+        });
+}
+
+function loadSettingsAgents() {
+    const grid = document.getElementById('settings-agents-grid');
+    if (!grid) return;
+
+    fetch('/api/agents')
+        .then(r => r.json())
+        .then(agents => {
+            grid.innerHTML = agents.map(agent => {
+                const colors = AGENT_COLORS[agent.name] || { bg: 'bg-gray-500/10', text: 'text-gray-500' };
+                return `
+                    <div class="bg-white/5 border border-white/10 rounded-xl p-4 flex items-center justify-between">
+                        <div class="flex items-center gap-3">
+                            <div class="w-10 h-10 rounded-lg ${colors.bg} flex items-center justify-center text-xl">
+                                ${agent.emoji}
+                            </div>
+                            <div>
+                                <p class="font-medium">${agent.name}</p>
+                                <p class="text-xs text-text-secondary">${agent.role}</p>
+                            </div>
+                        </div>
+                        <label class="relative inline-flex items-center cursor-pointer">
+                            <input type="checkbox" class="sr-only peer" ${agent.enabled ? 'checked' : ''} 
+                                onchange="toggleAgentFromSettings('${agent.name}', this.checked)">
+                            <div class="w-11 h-6 bg-gray-200 rounded-full peer dark:bg-gray-700 peer-checked:bg-primary 
+                                after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white 
+                                after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full"></div>
+                        </label>
+                    </div>
+                `;
+            }).join('');
+
+            // Add specialists
+            const specialistCards = specialists.map(spec => `
+                <div class="bg-white/5 border border-white/10 rounded-xl p-4 flex items-center justify-between">
+                    <div class="flex items-center gap-3">
+                        <div class="w-10 h-10 rounded-lg bg-indigo-500/10 flex items-center justify-center text-xl">
+                            ${spec.emoji}
+                        </div>
+                        <div>
+                            <p class="font-medium">${spec.name}</p>
+                            <p class="text-xs text-text-secondary">${spec.role}</p>
+                        </div>
+                    </div>
+                    <button onclick="deleteSpecialist('${spec.name}'); loadSettingsAgents();" 
+                        class="text-text-secondary hover:text-red-400 transition-colors">
+                        <span class="material-symbols-outlined text-[18px]">delete</span>
+                    </button>
+                </div>
+            `).join('');
+
+            grid.innerHTML += specialistCards;
+        })
+        .catch(err => {
+            grid.innerHTML = '<p class="text-text-secondary">Błąd ładowania agentów</p>';
+        });
+}
+
+async function toggleAgentFromSettings(name, enabled) {
+    try {
+        await fetch(`/api/agents/${encodeURIComponent(name)}/toggle`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled })
+        });
+        showToast(`${name} ${enabled ? 'włączony' : 'wyłączony'}`, 'success');
+        loadAgents(); // Refresh main sidebar
+    } catch (err) {
+        showToast('Błąd zmiany statusu', 'error');
+    }
+}
+
+function loadSettingsKnowledge() {
+    fetch('/api/stats')
+        .then(r => r.json())
+        .then(stats => {
+            const kbEl = document.getElementById('settings-kb-vectors');
+            if (kbEl) kbEl.textContent = (stats.total_vectors || 0).toLocaleString();
+        });
+}
+
+async function handleSettingsPdfImport(e) {
+    const file = e.target.files[0];
+    if (!file || !file.name.endsWith('.pdf')) {
+        showToast('Wybierz plik PDF', 'error');
+        return;
+    }
+    showToast('Importowanie do bazy wiedzy...', 'info');
+    const formData = new FormData();
+    formData.append('file', file);
+    try {
+        const response = await fetch('/api/ingest', { method: 'POST', body: formData });
+        if (!response.ok) throw new Error((await response.json()).detail || 'Import failed');
+        const result = await response.json();
+        showToast(`✓ Zaimportowano ${result.chunks_count} chunków`, 'success');
+        loadSettingsKnowledge();
+        loadStats();
+    } catch (err) {
+        showToast('Błąd importu: ' + err.message, 'error');
+    }
+    e.target.value = '';
 }
 
 // ========== MODEL FUNCTIONS ==========
@@ -1231,6 +1406,23 @@ function handleComplete(totalAgents) {
         sources: []
     };
 
+    // Store for export
+    const exportResponses = Object.entries(streamingAgentResponses).map(([name, data]) => ({
+        agent: name,
+        emoji: data.emoji,
+        role: data.role,
+        content: data.content
+    }));
+    storeSessionForExport(
+        queryText.textContent,
+        exportResponses,
+        synthesis?.content || null,
+        currentMode
+    );
+
+    // Show export button
+    showExportButton();
+
     history.push({
         query: queryText.textContent,
         synthesis: synthesis?.content || '',
@@ -1239,6 +1431,27 @@ function handleComplete(totalAgents) {
 
     saveCurrentSession(queryText.textContent);
     showToast('Narada zakończona', 'success');
+}
+
+function showExportButton() {
+    const resultsArea = document.getElementById('results-area');
+    if (!resultsArea) return;
+
+    // Remove existing export button if any
+    const existing = document.getElementById('export-button-container');
+    if (existing) existing.remove();
+
+    const container = document.createElement('div');
+    container.id = 'export-button-container';
+    container.className = 'flex justify-center py-6';
+    container.innerHTML = `
+        <button onclick="showExportMenu(event)" 
+            class="flex items-center gap-2 px-4 py-2 bg-white/5 border border-white/10 rounded-lg text-sm text-text-secondary hover:text-white hover:bg-white/10 transition-colors">
+            <span class="material-symbols-outlined text-[18px]">download</span>
+            Eksportuj wyniki
+        </button>
+    `;
+    resultsArea.appendChild(container);
 }
 
 // Keep original deliberate for fallback/non-streaming mode
@@ -1965,6 +2178,202 @@ function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+}
+
+// ========== SESSION EXPORT ==========
+let lastSessionData = null; // Store last completed session for export
+
+function storeSessionForExport(query, responses, synthesis, mode) {
+    lastSessionData = {
+        timestamp: new Date().toISOString(),
+        query: query,
+        mode: mode || currentMode,
+        provider: currentProvider,
+        model: currentModel,
+        responses: responses || [],
+        synthesis: synthesis || null
+    };
+}
+
+function exportSessionMarkdown() {
+    if (!lastSessionData) {
+        showToast('Brak danych do eksportu. Najpierw przeprowadź naradę.', 'error');
+        return;
+    }
+
+    const md = generateMarkdown(lastSessionData);
+    downloadFile(md, `narada_${formatDateForFilename(lastSessionData.timestamp)}.md`, 'text/markdown');
+    showToast('Eksport Markdown pobrany', 'success');
+}
+
+function exportSessionHtml() {
+    if (!lastSessionData) {
+        showToast('Brak danych do eksportu. Najpierw przeprowadź naradę.', 'error');
+        return;
+    }
+
+    const html = generateHtml(lastSessionData);
+    downloadFile(html, `narada_${formatDateForFilename(lastSessionData.timestamp)}.html`, 'text/html');
+    showToast('Eksport HTML pobrany', 'success');
+}
+
+function copySessionToClipboard() {
+    if (!lastSessionData) {
+        showToast('Brak danych do skopiowania. Najpierw przeprowadź naradę.', 'error');
+        return;
+    }
+
+    const md = generateMarkdown(lastSessionData);
+    navigator.clipboard.writeText(md).then(() => {
+        showToast('Skopiowano do schowka', 'success');
+    }).catch(() => {
+        showToast('Błąd kopiowania', 'error');
+    });
+}
+
+function generateMarkdown(data) {
+    let md = [];
+
+    md.push('# 🏛️ Narada Rady AI');
+    md.push('');
+    md.push(`**Data:** ${formatDate(data.timestamp)}`);
+    md.push(`**Tryb:** ${data.mode}`);
+    md.push(`**Model:** ${data.provider} / ${data.model}`);
+    md.push('');
+    md.push('---');
+    md.push('');
+    md.push('## 💬 Zapytanie');
+    md.push('');
+    md.push(`> ${data.query}`);
+    md.push('');
+    md.push('## 👥 Odpowiedzi Agentów');
+    md.push('');
+
+    for (const resp of data.responses) {
+        md.push(`### ${resp.emoji || ''} ${resp.agent}`);
+        if (resp.role) md.push(`*${resp.role}*`);
+        md.push('');
+        md.push(resp.content);
+        md.push('');
+    }
+
+    if (data.synthesis) {
+        md.push('## 🔮 Synteza Końcowa');
+        md.push('');
+        md.push(data.synthesis);
+        md.push('');
+    }
+
+    md.push('---');
+    md.push(`*Wygenerowano przez AI Council*`);
+
+    return md.join('\n');
+}
+
+function generateHtml(data) {
+    return `<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <title>Narada Rady AI</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', sans-serif; line-height: 1.6; color: #333; max-width: 800px; margin: 0 auto; padding: 40px 20px; background: #fff; }
+        h1 { color: #1a1a2e; font-size: 28px; margin-bottom: 20px; border-bottom: 3px solid #3b19e6; padding-bottom: 10px; }
+        h2 { color: #3b19e6; font-size: 20px; margin: 30px 0 15px 0; }
+        h3 { color: #333; font-size: 16px; margin: 20px 0 10px 0; padding: 8px 12px; background: #f0f0f5; border-radius: 6px; }
+        .meta { background: #f8f8fc; padding: 15px 20px; border-radius: 8px; margin-bottom: 20px; font-size: 14px; color: #666; }
+        .query { background: linear-gradient(135deg, #3b19e6 0%, #6b4fe6 100%); color: white; padding: 20px; border-radius: 12px; margin: 20px 0; }
+        .agent { background: #fafafa; border: 1px solid #eee; border-radius: 12px; padding: 20px; margin: 15px 0; }
+        .agent-name { font-weight: 600; color: #3b19e6; }
+        .agent-content { white-space: pre-wrap; font-size: 14px; margin-top: 10px; }
+        .synthesis { background: linear-gradient(135deg, #1a1a2e 0%, #2a2a4e 100%); color: white; padding: 25px; border-radius: 12px; margin: 30px 0; }
+        .synthesis h2 { color: #ffd700; margin-top: 0; }
+        .footer { margin-top: 40px; padding-top: 20px; border-top: 1px solid #eee; font-size: 12px; color: #999; text-align: center; }
+    </style>
+</head>
+<body>
+    <h1>🏛️ Narada Rady AI</h1>
+    <div class="meta">
+        <strong>Data:</strong> ${formatDate(data.timestamp)} | 
+        <strong>Tryb:</strong> ${data.mode} | 
+        <strong>Model:</strong> ${data.provider} / ${data.model}
+    </div>
+    <h2>💬 Zapytanie</h2>
+    <div class="query">${escapeHtml(data.query)}</div>
+    <h2>👥 Odpowiedzi Agentów</h2>
+    ${data.responses.map(r => `
+        <div class="agent">
+            <div class="agent-name">${r.emoji || ''} ${escapeHtml(r.agent)}</div>
+            ${r.role ? `<div style="font-size:13px;color:#888;font-style:italic;">${escapeHtml(r.role)}</div>` : ''}
+            <div class="agent-content">${escapeHtml(r.content)}</div>
+        </div>
+    `).join('')}
+    ${data.synthesis ? `
+        <div class="synthesis">
+            <h2>🔮 Synteza Końcowa</h2>
+            <div style="white-space:pre-wrap;">${escapeHtml(data.synthesis)}</div>
+        </div>
+    ` : ''}
+    <div class="footer">Wygenerowano przez AI Council</div>
+</body>
+</html>`;
+}
+
+function downloadFile(content, filename, mimeType) {
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
+
+function formatDateForFilename(isoString) {
+    const date = new Date(isoString);
+    return date.toISOString().slice(0, 16).replace(/[-:T]/g, '').slice(0, 12);
+}
+
+function showExportMenu(event) {
+    event.stopPropagation();
+    const existing = document.getElementById('export-menu');
+    if (existing) existing.remove();
+
+    const menu = document.createElement('div');
+    menu.id = 'export-menu';
+    menu.className = 'fixed bg-surface-dark border border-white/10 rounded-lg shadow-xl z-50 p-2 min-w-[160px]';
+    menu.style.top = (event.clientY + 10) + 'px';
+    menu.style.left = event.clientX + 'px';
+
+    menu.innerHTML = `
+        <button onclick="exportSessionMarkdown(); closeExportMenu();" class="w-full text-left px-3 py-2 rounded hover:bg-white/10 flex items-center gap-2 text-sm">
+            <span class="material-symbols-outlined text-[18px]">description</span>
+            Markdown (.md)
+        </button>
+        <button onclick="exportSessionHtml(); closeExportMenu();" class="w-full text-left px-3 py-2 rounded hover:bg-white/10 flex items-center gap-2 text-sm">
+            <span class="material-symbols-outlined text-[18px]">code</span>
+            HTML
+        </button>
+        <button onclick="copySessionToClipboard(); closeExportMenu();" class="w-full text-left px-3 py-2 rounded hover:bg-white/10 flex items-center gap-2 text-sm">
+            <span class="material-symbols-outlined text-[18px]">content_copy</span>
+            Kopiuj do schowka
+        </button>
+    `;
+
+    document.body.appendChild(menu);
+
+    // Close on outside click
+    setTimeout(() => {
+        document.addEventListener('click', closeExportMenu, { once: true });
+    }, 10);
+}
+
+function closeExportMenu() {
+    const menu = document.getElementById('export-menu');
+    if (menu) menu.remove();
 }
 
 function showToast(message, type = 'info') {

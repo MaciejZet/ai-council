@@ -13,7 +13,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse, FileResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, FileResponse, StreamingResponse, Response
 from pydantic import BaseModel
 
 # Import existing modules
@@ -348,11 +348,67 @@ async def ingest_document(file: UploadFile = File(...)):
         temp_path.unlink(missing_ok=True)
 
 
-@app.get("/api/export/{format}")
-async def export_last_result(format: str):
-    """Export last deliberation result (placeholder)"""
-    # In production, would store last result in session/cache
-    raise HTTPException(status_code=501, detail="Export not implemented yet")
+@app.get("/api/sessions/{session_id}/export")
+async def export_session(session_id: str, format: str = "markdown"):
+    """
+    Export session to Markdown, HTML, or PDF
+    
+    Args:
+        session_id: UUID of the session
+        format: 'markdown', 'html', or 'pdf'
+    """
+    from src.storage import session_history, export_to_markdown, export_to_html, export_to_pdf
+    
+    # Load session
+    session = session_history.load_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    # Format date for filename
+    from datetime import datetime
+    try:
+        dt = datetime.fromisoformat(session.metadata.timestamp)
+        date_str = dt.strftime("%Y%m%d_%H%M")
+    except:
+        date_str = "export"
+    
+    filename_base = f"narada_{date_str}"
+    
+    if format == "markdown" or format == "md":
+        content = export_to_markdown(session)
+        return Response(
+            content=content,
+            media_type="text/markdown",
+            headers={"Content-Disposition": f"attachment; filename={filename_base}.md"}
+        )
+    
+    elif format == "html":
+        content = export_to_html(session)
+        return Response(
+            content=content,
+            media_type="text/html",
+            headers={"Content-Disposition": f"attachment; filename={filename_base}.html"}
+        )
+    
+    elif format == "pdf":
+        pdf_bytes = export_to_pdf(session)
+        if pdf_bytes:
+            return Response(
+                content=pdf_bytes,
+                media_type="application/pdf",
+                headers={"Content-Disposition": f"attachment; filename={filename_base}.pdf"}
+            )
+        else:
+            # Fallback to HTML if PDF generation fails
+            content = export_to_html(session)
+            return Response(
+                content=content,
+                media_type="text/html",
+                headers={"Content-Disposition": f"attachment; filename={filename_base}.html"}
+            )
+    
+    else:
+        raise HTTPException(status_code=400, detail="Invalid format. Use 'markdown', 'html', or 'pdf'")
 
 
 @app.get("/api/deliberate/stream")
