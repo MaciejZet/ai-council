@@ -405,10 +405,10 @@ class OpenRouterProvider(LLMProvider):
                 {"role": "user", "content": user_prompt}
             ],
             temperature=temperature,
-            extra_headers={
-                "HTTP-Referer": "https://github.com/MaciejZet/ai-council", 
-                "X-Title": "AI Council"
-            }
+            # extra_headers={
+            #     "HTTP-Referer": "http://localhost:8000", 
+            #     "X-Title": "Local App"
+            # }
         )
         
         usage = response.usage
@@ -438,10 +438,10 @@ class OpenRouterProvider(LLMProvider):
             ],
             temperature=temperature,
             stream=True,
-            extra_headers={
-                "HTTP-Referer": "https://github.com/MaciejZet/ai-council", 
-                "X-Title": "AI Council"
-            }
+            # extra_headers={
+            #     "HTTP-Referer": "http://localhost:8000", 
+            #     "X-Title": "Local App"
+            # }
         )
         
         async for chunk in response:

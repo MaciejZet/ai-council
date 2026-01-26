@@ -123,7 +123,8 @@ class HistoricalCouncil:
         self,
         query: str,
         agent_ids: List[str] = None,
-        llm: Optional[LLMProvider] = None
+        llm: Optional[LLMProvider] = None,
+        include_synthesis: bool = True
     ) -> AsyncGenerator[str, None]:
         """
         Przeprowadza naradę ze streamingiem SSE
@@ -173,17 +174,18 @@ class HistoricalCouncil:
         yield f"data: {json.dumps({'event': 'round_done', 'round': 1})}\n\n"
         
         # ========== RUNDA 2: SYNTEZA MĄDROŚCI ==========
-        yield f"data: {json.dumps({'event': 'round_start', 'round': 2, 'type': 'synthesis', 'title': 'Mądrość Rady'})}\n\n"
-        
-        yield f"data: {json.dumps({'event': 'agent_start', 'agent': 'Rada Mędrców', 'emoji': '🔮', 'role': 'Syntezator', 'round': 2})}\n\n"
-        
-        full_synthesis = ""
-        async for token in synthesizer.synthesize_stream(query, context, all_responses):
-            full_synthesis += token
-            yield f"data: {json.dumps({'event': 'delta', 'agent': 'Rada Mędrców', 'content': token})}\n\n"
-        
-        yield f"data: {json.dumps({'event': 'agent_done', 'agent': 'Rada Mędrców', 'round': 2})}\n\n"
-        yield f"data: {json.dumps({'event': 'round_done', 'round': 2})}\n\n"
+        if include_synthesis:
+            yield f"data: {json.dumps({'event': 'round_start', 'round': 2, 'type': 'synthesis', 'title': 'Mądrość Rady'})}\n\n"
+            
+            yield f"data: {json.dumps({'event': 'agent_start', 'agent': 'Rada Mędrców', 'emoji': '🔮', 'role': 'Syntezator', 'round': 2})}\n\n"
+            
+            full_synthesis = ""
+            async for token in synthesizer.synthesize_stream(query, context, all_responses):
+                full_synthesis += token
+                yield f"data: {json.dumps({'event': 'delta', 'agent': 'Rada Mędrców', 'content': token})}\n\n"
+            
+            yield f"data: {json.dumps({'event': 'agent_done', 'agent': 'Rada Mędrców', 'round': 2})}\n\n"
+            yield f"data: {json.dumps({'event': 'round_done', 'round': 2})}\n\n"
         
         # ========== ZAKOŃCZENIE ==========
         yield f"data: {json.dumps({'event': 'complete', 'total_agents': len(agents)})}\n\n"

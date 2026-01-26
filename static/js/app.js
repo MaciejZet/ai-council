@@ -19,12 +19,16 @@ let currentPage = 'dashboard';
 let specialists = [];
 
 // Models per provider with token costs
-const MODELS = {
-    openai: ['gpt-4o', 'gpt-4o-mini', 'gpt-4.1', 'gpt-5-nano', 'gpt-5-mini', 'gpt-5', 'o1-mini'],
+// Models per provider (will be loaded from API)
+let MODELS = {
+    openai: ['gpt-4o', 'gpt-4o-mini'],
     grok: ['grok-2', 'grok-beta'],
-    gemini: ['gemini-2.5-pro-preview', 'gemini-2.0-flash', 'gemini-2.0-flash-lite', 'gemini-1.5-pro'],
-    deepseek: ['deepseek-chat', 'deepseek-reasoner']
+    gemini: ['gemini-1.5-pro'],
+    deepseek: ['deepseek-chat'],
+    openrouter: []
 };
+
+let AVAILABLE_PROVIDERS_LIST = ['openai', 'grok', 'gemini', 'deepseek', 'openrouter'];
 
 const TOKEN_COSTS = {
     'gpt-4o': 0.005, 'gpt-4o-mini': 0.00015, 'gpt-4.1': 0.002, 'gpt-5': 0.01,
@@ -238,12 +242,29 @@ document.addEventListener('DOMContentLoaded', () => {
     loadSpecialists();
     setupEventListeners();
 
-    // Initialize Custom Selects
-    initCustomSelects();
+    // Initialize Custom Selects (after fetching providers)
+    fetchProviders().then(() => {
+        initCustomSelects();
+        updateModels(); // Will use instance now
+    });
 
-    updateModels(); // Will use instance now
     navigateTo('dashboard');
 });
+
+async function fetchProviders() {
+    try {
+        const response = await fetch('/api/providers');
+        const data = await response.json();
+        if (data.providers) {
+            AVAILABLE_PROVIDERS_LIST = data.providers;
+        }
+        if (data.models) {
+            MODELS = data.models;
+        }
+    } catch (e) {
+        console.error("Failed to fetch providers", e);
+    }
+}
 
 function initCustomSelects() {
     // 1. MODE SELECT
@@ -275,12 +296,11 @@ function initCustomSelects() {
     });
 
     // 2. PROVIDER SELECT
-    const providerOptions = [
-        { value: 'openai', label: 'OpenAI', emoji: '🤖' },
-        { value: 'grok', label: 'Grok', emoji: '🚀' },
-        { value: 'gemini', label: 'Gemini', emoji: '💎' },
-        { value: 'deepseek', label: 'DeepSeek', emoji: '🧠' }
-    ];
+    const providerOptions = AVAILABLE_PROVIDERS_LIST.map(p => ({
+        value: p,
+        label: p.charAt(0).toUpperCase() + p.slice(1),
+        emoji: p === 'openai' ? '🤖' : (p === 'grok' ? '🚀' : (p === 'gemini' ? '💎' : (p === 'deepseek' ? '🧠' : (p === 'openrouter' ? '🌐' : (p === 'perplexity' ? '🔍' : '🔌')))))
+    }));
 
     providerSelectInstance = new CustomSelect({
         containerId: 'provider-select-container',
@@ -289,6 +309,7 @@ function initCustomSelects() {
         renderLabel: (opt) => opt ? `<span class="opacity-80">${opt.emoji}</span> <span class="hidden sm:inline">${opt.label}</span>` : '?',
         onChange: (val) => {
             currentProvider = val;
+            localStorage.setItem('ai_council_last_provider', val);
             updateModels();
             updateStatDisplay();
         },
@@ -306,7 +327,10 @@ function initCustomSelects() {
             const costBadge = cost ? `<span class="ml-auto text-xs opacity-50">$${cost}</span>` : '';
             return `<span class="truncate">${opt.label}</span> ${costBadge}`;
         },
-        onChange: (val) => currentModel = val,
+        onChange: (val) => {
+            currentModel = val;
+            localStorage.setItem('ai_council_last_model', val);
+        },
         align: 'right'
     });
 }
@@ -595,8 +619,15 @@ function saveSettings() {
 
 function loadSettings() {
     const settings = JSON.parse(localStorage.getItem('ai_council_settings') || '{}');
-    if (settings.defaultProvider) currentProvider = settings.defaultProvider;
-    if (settings.defaultModel) currentModel = settings.defaultModel;
+    const lastProvider = localStorage.getItem('ai_council_last_provider');
+    const lastModel = localStorage.getItem('ai_council_last_model');
+
+    if (lastProvider) currentProvider = lastProvider;
+    else if (settings.defaultProvider) currentProvider = settings.defaultProvider;
+
+    if (lastModel) currentModel = lastModel;
+    else if (settings.defaultModel) currentModel = settings.defaultModel;
+
     if (settings.kbDefault !== undefined && kbToggle) kbToggle.checked = settings.kbDefault;
 }
 
@@ -1044,7 +1075,8 @@ function mentorsStream(query) {
         agent_ids: agentIds,
         provider: currentProvider,
         model: currentModel,
-        mode: 'deliberate'  // or 'debate' for multi-round
+        mode: 'deliberate',  // or 'debate' for multi-round
+        include_synthesis: false
     });
 
     // Reset streaming state

@@ -222,10 +222,20 @@ async def get_providers():
         "models": {
             "openai": ["gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-5-nano", "gpt-5-mini", "gpt-5", "o1-mini"],
             "grok": ["grok-2", "grok-beta"],
-            "grok": ["grok-2", "grok-beta"],
             "gemini": ["gemini-3-pro-preview", "gemini-3-flash-preview", "gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash-exp"],
             "deepseek": ["deepseek-chat", "deepseek-reasoner"],
-            "openrouter": ["google/gemini-3-pro-preview:free", "anthropic/claude-3.5-sonnet", "meta-llama/llama-3.1-70b-instruct", "google/gemini-2.0-flash-exp:free"]
+            "perplexity": ["sonar", "sonar-pro", "sonar-reasoning"],
+            "openrouter": [
+                "google/gemini-3-pro-preview:free", 
+                "google/gemini-2.0-flash-exp:free",
+                "anthropic/claude-3.5-sonnet", 
+                "anthropic/claude-3-opus",
+                "meta-llama/llama-3.1-70b-instruct", 
+                "meta-llama/llama-3.1-405b-instruct",
+                "mistralai/mistral-large-2407",
+                "microsoft/wizardlm-2-8x22b",
+                "qwen/qwen-2.5-72b-instruct"
+            ]
         }
     }
 
@@ -627,7 +637,8 @@ async def historical_deliberate_stream(
     agent_ids: str = "",  # comma-separated
     provider: str = "openai",
     model: str = "gpt-4o",
-    mode: str = "deliberate"
+    mode: str = "deliberate",
+    include_synthesis: bool = True
 ):
     """
     Stream Historical Council deliberation (Rada Mędrców).
@@ -664,7 +675,7 @@ async def historical_deliberate_stream(
     if mode == "debate":
         stream = council.debate_stream(query, agent_ids=ids, llm=llm)
     else:
-        stream = council.deliberate_stream(query, agent_ids=ids, llm=llm)
+        stream = council.deliberate_stream(query, agent_ids=ids, llm=llm, include_synthesis=include_synthesis)
     
     return StreamingResponse(
         stream,
