@@ -1,13 +1,13 @@
 """
 LLM Provider Abstraction Layer
 ===============================
-Obsługuje wiele providerów LLM: OpenAI, Grok (xAI), Gemini
+Obsługuje wiele providerów LLM: OpenAI, Grok (xAI), Gemini, DeepSeek, Perplexity, OpenRouter
 Z obsługą zwracania usage (tokeny)
 """
 
 import os
 from abc import ABC, abstractmethod
-from typing import Optional, Tuple, Dict, Any, AsyncGenerator
+from typing import Optional, Tuple, Dict, Any, AsyncGenerator, List
 from dataclasses import dataclass
 from dotenv import load_dotenv
 
@@ -46,12 +46,21 @@ TOKEN_COSTS = {
     "grok-2": {"input": 0.002, "output": 0.01},
     "grok-beta": {"input": 0.005, "output": 0.015},
     # Gemini
-    "gemini-2.0-flash-exp": {"input": 0.00, "output": 0.00},  # Free tier
+    "gemini-3-pro-preview": {"input": 0.00, "output": 0.00},      # Preview pricing (usually free or specific tier)
+    "gemini-3-flash-preview": {"input": 0.00, "output": 0.00},    # Preview pricing
+    "gemini-2.5-pro": {"input": 0.00125, "output": 0.005},        # Estimated/Previous pro pricing
+    "gemini-2.5-flash": {"input": 0.000075, "output": 0.0003},    # Estimated/Previous flash pricing
+    "gemini-2.0-flash-exp": {"input": 0.00, "output": 0.00},     # Free tier
     "gemini-1.5-pro": {"input": 0.00125, "output": 0.005},
     "gemini-1.5-flash": {"input": 0.000075, "output": 0.0003},
     # DeepSeek
     "deepseek-chat": {"input": 0.00027, "output": 0.0011},      # DeepSeek V3
     "deepseek-reasoner": {"input": 0.00055, "output": 0.00219}, # DeepSeek R1
+    # Perplexity
+    "sonar": {"input": 0.001, "output": 0.001},
+    "sonar-pro": {"input": 0.003, "output": 0.015},
+    # OpenRouter (prices vary significantly, these are placeholders/averages)
+    "openrouter-default": {"input": 0.001, "output": 0.002},
 }
 
 
@@ -85,6 +94,10 @@ class LLMProvider(ABC):
     ) -> AsyncGenerator[str, None]:
         """Streamuje tokeny odpowiedzi jeden po drugim"""
         pass
+    
+    async def get_available_models(self) -> List[str]:
+        """Zwraca listę dostępnych modeli (jeśli provider to obsługuje)"""
+        return []
 
 
 class OpenAIProvider(LLMProvider):
@@ -303,6 +316,147 @@ class DeepSeekProvider(LLMProvider):
                 yield chunk.choices[0].delta.content
 
 
+class PerplexityProvider(LLMProvider):
+    """
+    Provider dla Perplexity AI (OpenAI-compatible API)
+    
+    Models:
+    - sonar: Fast, cost-effective search (128K context)
+    - sonar-pro: Advanced search with deeper analysis
+    """
+    
+    def __init__(self, model: str = "sonar-pro"):
+        from openai import AsyncOpenAI
+        self.client = AsyncOpenAI(
+            api_key=os.getenv("PERPLEXITY_API_KEY"),
+            base_url="https://api.perplexity.ai"
+        )
+        self.model = model
+    
+    async def generate(self, system_prompt: str, user_prompt: str, temperature: float = 0.7) -> LLMResponse:
+        response = await self.client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            temperature=temperature
+        )
+        
+        usage = response.usage
+        return LLMResponse(
+            content=response.choices[0].message.content,
+            prompt_tokens=usage.prompt_tokens if usage else 0,
+            completion_tokens=usage.completion_tokens if usage else 0,
+            total_tokens=usage.total_tokens if usage else 0,
+            model=self.model
+        )
+    
+    def get_name(self) -> str:
+        return f"Perplexity ({self.model})"
+    
+    async def generate_stream(
+        self, 
+        system_prompt: str, 
+        user_prompt: str, 
+        temperature: float = 0.7
+    ) -> AsyncGenerator[str, None]:
+        """Streamuje tokeny odpowiedzi z Perplexity"""
+        response = await self.client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            temperature=temperature,
+            stream=True
+        )
+        
+        async for chunk in response:
+            if chunk.choices and chunk.choices[0].delta.content:
+                yield chunk.choices[0].delta.content
+
+
+class OpenRouterProvider(LLMProvider):
+    """
+    Provider dla OpenRouter (Unified Interface for LLMs)
+    """
+    
+    def __init__(self, model: str = "google/gemini-2.0-flash-exp:free"):
+        from openai import AsyncOpenAI
+        self.client = AsyncOpenAI(
+            api_key=os.getenv("OPENROUTER_API_KEY"),
+            base_url="https://openrouter.ai/api/v1"
+        )
+        self.model = model
+    
+    async def generate(self, system_prompt: str, user_prompt: str, temperature: float = 0.7) -> LLMResponse:
+        # OpenRouter often requires 'referer' and 'title' headers, 
+        # but the OpenAI client doesn't make it easy to add custom headers globally without hacks.
+        # However, it usually works without them for basic access or if configured in the dashboard.
+        # Alternatively, we can pass `extra_headers` to the client constructor if using a newer openai lib,
+        # or `extra_headers` in the request logic if supported.
+        # For now, we'll try standard OpenAI compatible request.
+        
+        response = await self.client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            temperature=temperature,
+            extra_headers={
+                "HTTP-Referer": "https://github.com/MaciejZet/ai-council", 
+                "X-Title": "AI Council"
+            }
+        )
+        
+        usage = response.usage
+        return LLMResponse(
+            content=response.choices[0].message.content,
+            prompt_tokens=usage.prompt_tokens if usage else 0,
+            completion_tokens=usage.completion_tokens if usage else 0,
+            total_tokens=usage.total_tokens if usage else 0,
+            model=self.model
+        )
+    
+    def get_name(self) -> str:
+        return f"OpenRouter ({self.model})"
+    
+    async def generate_stream(
+        self, 
+        system_prompt: str, 
+        user_prompt: str, 
+        temperature: float = 0.7
+    ) -> AsyncGenerator[str, None]:
+        """Streamuje tokeny odpowiedzi z OpenRouter"""
+        response = await self.client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            temperature=temperature,
+            stream=True,
+            extra_headers={
+                "HTTP-Referer": "https://github.com/MaciejZet/ai-council", 
+                "X-Title": "AI Council"
+            }
+        )
+        
+        async for chunk in response:
+            if chunk.choices and chunk.choices[0].delta.content:
+                yield chunk.choices[0].delta.content
+
+    async def get_available_models(self) -> List[str]:
+        """Zwraca listę modeli dostępnych w OpenRouter"""
+        try:
+            response = await self.client.models.list()
+            return [model.id for model in response.data]
+        except Exception:
+            return []
+
+
 def get_provider(provider_name: Optional[str] = None, model: Optional[str] = None) -> LLMProvider:
     """
     Fabryka providerów LLM
@@ -320,15 +474,19 @@ def get_provider(provider_name: Optional[str] = None, model: Optional[str] = Non
     default_models = {
         "openai": "gpt-4o",
         "grok": "grok-beta",
-        "gemini": "gemini-1.5-pro",
-        "deepseek": "deepseek-chat"
+        "gemini": "gemini-3-pro-preview",
+        "deepseek": "deepseek-chat",
+        "perplexity": "sonar-pro",
+        "openrouter": "google/gemini-3-pro-preview:free"
     }
     
     providers = {
         "openai": OpenAIProvider,
         "grok": GrokProvider,
         "gemini": GeminiProvider,
-        "deepseek": DeepSeekProvider
+        "deepseek": DeepSeekProvider,
+        "perplexity": PerplexityProvider,
+        "openrouter": OpenRouterProvider
     }
     
     if provider_name not in providers:
@@ -339,5 +497,5 @@ def get_provider(provider_name: Optional[str] = None, model: Optional[str] = Non
 
 
 # Lista dostępnych providerów
-AVAILABLE_PROVIDERS = ["openai", "grok", "gemini", "deepseek"]
-
+# Lista dostępnych providerów
+AVAILABLE_PROVIDERS = ["openai", "grok", "gemini", "deepseek", "perplexity", "openrouter"]

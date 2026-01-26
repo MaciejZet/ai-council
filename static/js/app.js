@@ -2687,6 +2687,9 @@ window.navigateTo = function (page) {
     if (page === 'plugins') {
         initPluginsPage();
     }
+    if (page === 'seo') {
+        loadSEOArticles();
+    }
 };
 
 // ========== PLUGINS PAGE ==========
@@ -2832,3 +2835,376 @@ async function executeUrlAnalysis(e) {
         console.error(error);
     }
 }
+
+// ========== SEO ARTICLE GENERATOR ==========
+let seoLastResult = null;
+
+async function generateSEOArticle() {
+    const topic = document.getElementById('seo-topic').value.trim();
+    if (!topic) {
+        showToast('Wprowadź temat artykułu', 'error');
+        return;
+    }
+
+    const targetUrl = document.getElementById('seo-target-url').value.trim();
+    const keywordsInput = document.getElementById('seo-keywords-input').value.trim();
+    const keywords = keywordsInput ? keywordsInput.split(',').map(k => k.trim()).filter(k => k) : [];
+    const ahrefsData = document.getElementById('seo-ahrefs-data').value.trim();
+    const perplexityModel = document.getElementById('seo-perplexity-model').value;
+    const llmSelection = document.getElementById('seo-llm-provider').value.split(':');
+    const provider = llmSelection[0];
+    const model = llmSelection[1];
+    const includeBrand = document.getElementById('seo-include-brand').checked;
+    const analyzeSERP = document.getElementById('seo-analyze-serp').checked;
+    const minWords = parseInt(document.getElementById('seo-min-words').value) || 1500;
+
+    // Show loading
+    document.getElementById('seo-loading').classList.remove('hidden');
+    document.getElementById('seo-results').classList.add('hidden');
+    document.getElementById('seo-loading-text').textContent = 'Generowanie artykułu...';
+
+    try {
+        // Update loading steps
+        if (analyzeSERP) {
+            document.getElementById('seo-loading-text').textContent = 'Analizowanie konkurencji SERP...';
+            await new Promise(r => setTimeout(r, 1000));
+        }
+        if (perplexityModel) {
+            document.getElementById('seo-loading-text').textContent = 'Badanie tematu przez Perplexity...';
+            await new Promise(r => setTimeout(r, 500));
+        }
+        document.getElementById('seo-loading-text').textContent = 'Generowanie artykułu...';
+
+        const response = await fetch('/api/seo/generate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                topic,
+                target_url: targetUrl,
+                keywords,
+                ahrefs_data: ahrefsData,
+                min_words: minWords,
+                include_brand_info: includeBrand,
+                analyze_serp: analyzeSERP,
+                perplexity_model: perplexityModel,
+                provider,
+                model,
+                force_generate: false
+            })
+        });
+
+        const result = await response.json();
+
+        // Hide loading
+        document.getElementById('seo-loading').classList.add('hidden');
+
+        if (result.success) {
+            seoLastResult = result;
+
+            // Show results
+            document.getElementById('seo-results').classList.remove('hidden');
+            document.getElementById('seo-result-title').textContent = result.title;
+            document.getElementById('seo-result-words').textContent = result.word_count;
+            document.getElementById('seo-result-tokens').textContent = result.usage?.total_tokens || 0;
+
+            // Build article HTML with ToC
+            let articleHtml = '';
+
+            // Add Table of Contents if available
+            if (result.table_of_contents && result.table_of_contents.count > 0) {
+                articleHtml += `
+                    <div class="toc-container mb-6 p-4 bg-slate-50 dark:bg-black/20 rounded-lg border border-gray-200 dark:border-white/10">
+                        <h4 class="font-bold text-sm mb-3 flex items-center gap-2">
+                            <span class="material-symbols-outlined text-[18px]">list</span>
+                            Spis treści
+                        </h4>
+                        ${result.table_of_contents.html}
+                    </div>`;
+            }
+
+            articleHtml += result.article_html;
+            document.getElementById('seo-article-content').innerHTML = articleHtml;
+
+            // Show Schema section
+            if (result.schema_json_ld) {
+                const schemaSection = document.getElementById('seo-schema-section');
+                if (schemaSection) {
+                    schemaSection.classList.remove('hidden');
+                    document.getElementById('seo-schema-preview').textContent = result.schema_json_ld;
+                }
+            }
+
+            // Show Featured Snippet suggestions
+            if (result.featured_snippet_suggestions && result.featured_snippet_suggestions.suggestions) {
+                const snippetSection = document.getElementById('seo-snippet-section');
+                if (snippetSection && result.featured_snippet_suggestions.suggestions.length > 0) {
+                    snippetSection.classList.remove('hidden');
+                    document.getElementById('seo-snippet-suggestions').innerHTML =
+                        result.featured_snippet_suggestions.suggestions.map(s =>
+                            `<li class="text-sm text-text-secondary">💡 ${escapeHtml(s)}</li>`
+                        ).join('');
+                }
+            }
+
+            showToast(`Artykuł wygenerowany: ${result.word_count} słów`, 'success');
+
+            // Refresh articles list
+            await loadSEOArticles();
+        } else {
+            if (result.similar_exists) {
+                const similarTitles = result.similar_articles.map(a => a.title).join(', ');
+                showToast(`Znaleziono podobne artykuły: ${similarTitles}`, 'warning');
+            } else {
+                showToast('Błąd: ' + result.error, 'error');
+            }
+        }
+    } catch (error) {
+        document.getElementById('seo-loading').classList.add('hidden');
+        showToast('Błąd generowania artykułu: ' + error.message, 'error');
+        console.error(error);
+    }
+}
+
+async function loadSEOArticles() {
+    const container = document.getElementById('seo-articles-list');
+    if (!container) return;
+
+    try {
+        const response = await fetch('/api/seo/articles');
+        const result = await response.json();
+
+        if (result.success && result.articles.length > 0) {
+            container.innerHTML = result.articles.map(article => `
+                <div class="flex items-center justify-between p-3 bg-white/5 rounded-lg hover:bg-white/10 transition-colors group">
+                    <div class="flex-1 min-w-0">
+                        <p class="font-medium text-sm truncate">${escapeHtml(article.title)}</p>
+                        <p class="text-xs text-text-secondary">
+                            ${article.word_count} słów • ${article.created_at ? new Date(article.created_at).toLocaleDateString('pl-PL') : ''}
+                        </p>
+                    </div>
+                    <div class="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button onclick="viewSEOArticle('${article.id}')" 
+                            class="p-2 hover:bg-white/10 rounded-lg transition-colors" title="Podgląd">
+                            <span class="material-symbols-outlined text-[18px]">visibility</span>
+                        </button>
+                        <button onclick="deleteSEOArticle('${article.id}')" 
+                            class="p-2 hover:bg-red-500/20 text-red-400 rounded-lg transition-colors" title="Usuń">
+                            <span class="material-symbols-outlined text-[18px]">delete</span>
+                        </button>
+                    </div>
+                </div>
+            `).join('');
+        } else {
+            container.innerHTML = '<p class="text-sm text-text-secondary italic">Brak wygenerowanych artykułów</p>';
+        }
+    } catch (error) {
+        container.innerHTML = '<p class="text-sm text-red-400">Błąd ładowania artykułów</p>';
+        console.error(error);
+    }
+}
+
+async function viewSEOArticle(articleId) {
+    try {
+        const response = await fetch(`/api/seo/articles/${articleId}`);
+        const article = await response.json();
+
+        if (article.id) {
+            seoLastResult = {
+                article_html: article.content_html,
+                article_markdown: article.content_markdown,
+                title: article.title,
+                word_count: article.word_count
+            };
+
+            document.getElementById('seo-results').classList.remove('hidden');
+            document.getElementById('seo-result-title').textContent = article.title;
+            document.getElementById('seo-result-words').textContent = article.word_count;
+            document.getElementById('seo-result-tokens').textContent = '-';
+            document.getElementById('seo-article-content').innerHTML = article.content_html;
+
+            // Scroll to results
+            document.getElementById('seo-results').scrollIntoView({ behavior: 'smooth' });
+        }
+    } catch (error) {
+        showToast('Błąd ładowania artykułu', 'error');
+        console.error(error);
+    }
+}
+
+async function deleteSEOArticle(articleId) {
+    if (!confirm('Czy na pewno chcesz usunąć ten artykuł?')) return;
+
+    try {
+        await fetch(`/api/seo/articles/${articleId}`, { method: 'DELETE' });
+        showToast('Artykuł usunięty', 'success');
+        await loadSEOArticles();
+    } catch (error) {
+        showToast('Błąd usuwania artykułu', 'error');
+        console.error(error);
+    }
+}
+
+function copySEOArticle(format) {
+    if (!seoLastResult) {
+        showToast('Brak artykułu do skopiowania', 'error');
+        return;
+    }
+
+    let content;
+    if (format === 'html') {
+        content = seoLastResult.article_html;
+    } else if (format === 'schema') {
+        content = seoLastResult.schema_html_script || seoLastResult.schema_json_ld;
+    } else {
+        content = seoLastResult.article_markdown;
+    }
+
+    navigator.clipboard.writeText(content).then(() => {
+        showToast(`Skopiowano ${format.toUpperCase()} do schowka`, 'success');
+    }).catch(err => {
+        showToast('Błąd kopiowania', 'error');
+        console.error(err);
+    });
+}
+
+async function openBrandInfoModal() {
+    // Load current brand info
+    try {
+        const response = await fetch('/api/seo/brand-info');
+        const brandInfo = await response.json();
+
+        // Create and show modal
+        const modal = document.createElement('div');
+        modal.id = 'brand-info-modal';
+        modal.className = 'fixed inset-0 bg-black/50 flex items-center justify-center z-50';
+        modal.innerHTML = `
+            <div class="bg-surface-dark rounded-xl border border-white/10 p-6 max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+                <h3 class="text-lg font-bold mb-4 flex items-center gap-2">
+                    <span class="material-symbols-outlined text-primary">business</span>
+                    Ustawienia marki
+                </h3>
+                <form id="brand-info-form" class="space-y-4">
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm text-text-secondary mb-1">Nazwa firmy</label>
+                            <input type="text" id="brand-name" value="${escapeHtml(brandInfo.name || '')}"
+                                class="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-2 text-sm">
+                        </div>
+                        <div>
+                            <label class="block text-sm text-text-secondary mb-1">Ton komunikacji</label>
+                            <select id="brand-tone" class="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-2 text-sm">
+                                <option value="professional" ${brandInfo.tone_of_voice === 'professional' ? 'selected' : ''}>Profesjonalny</option>
+                                <option value="friendly" ${brandInfo.tone_of_voice === 'friendly' ? 'selected' : ''}>Przyjazny</option>
+                                <option value="expert" ${brandInfo.tone_of_voice === 'expert' ? 'selected' : ''}>Ekspercki</option>
+                                <option value="casual" ${brandInfo.tone_of_voice === 'casual' ? 'selected' : ''}>Swobodny</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-sm text-text-secondary mb-1">Opis firmy</label>
+                        <textarea id="brand-description" rows="2" 
+                            class="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-2 text-sm">${escapeHtml(brandInfo.description || '')}</textarea>
+                    </div>
+                    <div>
+                        <label class="block text-sm text-text-secondary mb-1">Propozycja wartości</label>
+                        <input type="text" id="brand-value" value="${escapeHtml(brandInfo.value_proposition || '')}"
+                            class="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-2 text-sm">
+                    </div>
+                    <div>
+                        <label class="block text-sm text-text-secondary mb-1">Główne produkty/usługi (oddzielone przecinkami)</label>
+                        <input type="text" id="brand-products" value="${escapeHtml((brandInfo.key_products || []).join(', '))}"
+                            class="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-2 text-sm">
+                    </div>
+                    <div>
+                        <label class="block text-sm text-text-secondary mb-1">Grupa docelowa</label>
+                        <input type="text" id="brand-audience" value="${escapeHtml(brandInfo.target_audience || '')}"
+                            class="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-2 text-sm">
+                    </div>
+                    <div>
+                        <label class="block text-sm text-text-secondary mb-1">USP - Unikalne cechy (oddzielone przecinkami)</label>
+                        <input type="text" id="brand-usp" value="${escapeHtml((brandInfo.unique_selling_points || []).join(', '))}"
+                            class="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-2 text-sm">
+                    </div>
+                    <div>
+                        <label class="block text-sm text-text-secondary mb-1">Preferowane CTA</label>
+                        <input type="text" id="brand-cta" value="${escapeHtml(brandInfo.preferred_cta || '')}"
+                            class="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-2 text-sm" 
+                            placeholder="np. Skontaktuj się z nami">
+                    </div>
+                    <div>
+                        <label class="block text-sm text-text-secondary mb-1">NIE wspominaj o (oddzielone przecinkami)</label>
+                        <input type="text" id="brand-donot" value="${escapeHtml((brandInfo.do_not_mention || []).join(', '))}"
+                            class="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-2 text-sm"
+                            placeholder="np. konkurencja, promocje">
+                    </div>
+                    <div class="flex gap-3 pt-4">
+                        <button type="submit" class="flex-1 bg-primary hover:bg-primary-hover text-white py-2 rounded-lg font-medium">
+                            Zapisz
+                        </button>
+                        <button type="button" onclick="closeBrandInfoModal()" 
+                            class="px-6 py-2 bg-white/5 hover:bg-white/10 rounded-lg font-medium">
+                            Anuluj
+                        </button>
+                    </div>
+                </form>
+            </div>
+        `;
+
+        document.body.appendChild(modal);
+
+        // Form submission
+        document.getElementById('brand-info-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            await saveBrandInfo();
+        });
+
+        // Click outside to close
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) closeBrandInfoModal();
+        });
+
+    } catch (error) {
+        showToast('Błąd ładowania danych marki', 'error');
+        console.error(error);
+    }
+}
+
+async function saveBrandInfo() {
+    const data = {
+        name: document.getElementById('brand-name').value,
+        description: document.getElementById('brand-description').value,
+        value_proposition: document.getElementById('brand-value').value,
+        tone_of_voice: document.getElementById('brand-tone').value,
+        key_products: document.getElementById('brand-products').value.split(',').map(s => s.trim()).filter(s => s),
+        target_audience: document.getElementById('brand-audience').value,
+        unique_selling_points: document.getElementById('brand-usp').value.split(',').map(s => s.trim()).filter(s => s),
+        preferred_cta: document.getElementById('brand-cta').value,
+        do_not_mention: document.getElementById('brand-donot').value.split(',').map(s => s.trim()).filter(s => s)
+    };
+
+    try {
+        const response = await fetch('/api/seo/brand-info', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            showToast('Dane marki zapisane', 'success');
+            closeBrandInfoModal();
+        } else {
+            showToast('Błąd zapisu', 'error');
+        }
+    } catch (error) {
+        showToast('Błąd zapisu danych marki', 'error');
+        console.error(error);
+    }
+}
+
+function closeBrandInfoModal() {
+    const modal = document.getElementById('brand-info-modal');
+    if (modal) modal.remove();
+}
+

@@ -27,7 +27,10 @@ from src.council.orchestrator import Council, CouncilDeliberation, format_delibe
 from src.council.debate import DebateOrchestrator
 from src.knowledge.ingest import ingest_pdf, get_ingestion_stats
 from src.knowledge.retriever import get_category_emoji, query_knowledge, format_sources_for_display
-from src.llm_providers import OpenAIProvider, GrokProvider, GeminiProvider, AVAILABLE_PROVIDERS, get_provider
+from src.council.debate import DebateOrchestrator
+from src.knowledge.ingest import ingest_pdf, get_ingestion_stats
+from src.knowledge.retriever import get_category_emoji, query_knowledge, format_sources_for_display
+from src.llm_providers import OpenAIProvider, GrokProvider, GeminiProvider, DeepSeekProvider, OpenRouterProvider, AVAILABLE_PROVIDERS, get_provider
 from src.plugins import get_plugin_manager, PluginResult
 from src.plugins.web_search import TavilySearchPlugin, DuckDuckGoSearchPlugin
 from src.plugins.url_analyzer import URLAnalyzerPlugin
@@ -219,8 +222,10 @@ async def get_providers():
         "models": {
             "openai": ["gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-5-nano", "gpt-5-mini", "gpt-5", "o1-mini"],
             "grok": ["grok-2", "grok-beta"],
-            "gemini": ["gemini-2.5-pro-preview", "gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-1.5-pro"],
-            "deepseek": ["deepseek-chat", "deepseek-reasoner"]
+            "grok": ["grok-2", "grok-beta"],
+            "gemini": ["gemini-3-pro-preview", "gemini-3-flash-preview", "gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash-exp"],
+            "deepseek": ["deepseek-chat", "deepseek-reasoner"],
+            "openrouter": ["google/gemini-3-pro-preview:free", "anthropic/claude-3.5-sonnet", "meta-llama/llama-3.1-70b-instruct", "google/gemini-2.0-flash-exp:free"]
         }
     }
 
@@ -248,6 +253,10 @@ async def deliberate(request: DeliberateRequest):
         llm = OpenAIProvider(model=request.model)
     elif request.provider == "grok":
         llm = GrokProvider(model=request.model)
+    elif request.provider == "deepseek":
+        llm = DeepSeekProvider(model=request.model)
+    elif request.provider == "openrouter":
+        llm = OpenRouterProvider(model=request.model)
     else:
         llm = GeminiProvider(model=request.model)
     
@@ -426,10 +435,15 @@ async def deliberate_stream(
     async def event_generator():
         try:
             # Create LLM provider
+            # Create LLM provider
             if provider == "openai":
                 llm = OpenAIProvider(model=model)
             elif provider == "grok":
                 llm = GrokProvider(model=model)
+            elif provider == "deepseek":
+                llm = DeepSeekProvider(model=model)
+            elif provider == "openrouter":
+                llm = OpenRouterProvider(model=model)
             else:
                 llm = GeminiProvider(model=model)
             
@@ -539,6 +553,10 @@ async def debate_stream(
         llm = OpenAIProvider(model=model)
     elif provider == "grok":
         llm = GrokProvider(model=model)
+    elif provider == "deepseek":
+        llm = DeepSeekProvider(model=model)
+    elif provider == "openrouter":
+        llm = OpenRouterProvider(model=model)
     else:
         llm = GeminiProvider(model=model)
     
@@ -626,6 +644,7 @@ async def historical_deliberate_stream(
     ids = [a.strip() for a in agent_ids.split(",") if a.strip()] if agent_ids else None
     
     # Create LLM provider
+    # Create LLM provider
     from src.llm_providers import DeepSeekProvider
     if provider == "openai":
         llm = OpenAIProvider(model=model)
@@ -633,6 +652,8 @@ async def historical_deliberate_stream(
         llm = GrokProvider(model=model)
     elif provider == "deepseek":
         llm = DeepSeekProvider(model=model)
+    elif provider == "openrouter":
+        llm = OpenRouterProvider(model=model)
     else:
         llm = GeminiProvider(model=model)
     
@@ -689,6 +710,7 @@ async def council_mode_stream(
         return {"error": f"Unknown mode: {mode}"}
     
     # Create LLM provider
+    # Create LLM provider
     from src.llm_providers import DeepSeekProvider
     if provider == "openai":
         llm = OpenAIProvider(model=model)
@@ -696,6 +718,8 @@ async def council_mode_stream(
         llm = GrokProvider(model=model)
     elif provider == "deepseek":
         llm = DeepSeekProvider(model=model)
+    elif provider == "openrouter":
+        llm = OpenRouterProvider(model=model)
     else:
         llm = GeminiProvider(model=model)
     
@@ -824,10 +848,15 @@ async def test_custom_agent(request: AgentTestRequest):
     )
     
     # Create provider
+    # Create provider
     if request.provider == "openai":
         llm = OpenAIProvider(model=request.model)
     elif request.provider == "grok":
         llm = GrokProvider(model=request.model)
+    elif request.provider == "deepseek":
+        llm = DeepSeekProvider(model=request.model)
+    elif request.provider == "openrouter":
+        llm = OpenRouterProvider(model=request.model)
     else:
         llm = GeminiProvider(model=request.model)
     
@@ -999,6 +1028,396 @@ async def execute_plugin(request: GenericPluginRequest):
     
     result = await plugin.execute(**request.params)
     return result.to_dict()
+
+
+# ========== SEO ARTICLE GENERATOR API ==========
+from src.seo import (
+    ArticleGenerator, ArticleResult,
+    BrandInfo, BrandInfoManager,
+    AhrefsImporter, AhrefsData,
+    SERPAnalyzer
+)
+from src.seo.article_storage import ArticleStorage
+
+
+class SEOGenerateRequest(BaseModel):
+    topic: str
+    target_url: str = ""
+    keywords: List[str] = []
+    ahrefs_data: str = ""
+    min_words: int = 1500
+    include_brand_info: bool = True
+    analyze_serp: bool = True
+    perplexity_model: str = "sonar-pro"
+    provider: str = "openai"
+    model: str = "gpt-4o"
+    force_generate: bool = False
+
+
+class BrandInfoRequest(BaseModel):
+    name: str = ""
+    description: str = ""
+    value_proposition: str = ""
+    tone_of_voice: str = "professional"
+    key_products: List[str] = []
+    target_audience: str = ""
+    unique_selling_points: List[str] = []
+    preferred_cta: str = ""
+    do_not_mention: List[str] = []
+
+
+@app.post("/api/seo/generate")
+async def generate_seo_article(request: SEOGenerateRequest):
+    """
+    Generate SEO-optimized article
+    
+    Full pipeline:
+    1. Check for similar existing articles
+    2. Parse Ahrefs data if provided
+    3. Analyze SERP competition
+    4. Research via Perplexity
+    5. Generate article with brand context
+    6. Store in Pinecone
+    """
+    # Create LLM provider
+    from src.llm_providers import DeepSeekProvider, PerplexityProvider
+    
+    if request.provider == "openai":
+        llm = OpenAIProvider(model=request.model)
+    elif request.provider == "grok":
+        llm = GrokProvider(model=request.model)
+    elif request.provider == "deepseek":
+        llm = DeepSeekProvider(model=request.model)
+    elif request.provider == "perplexity":
+        llm = PerplexityProvider(model=request.model)
+    else:
+        llm = GeminiProvider(model=request.model)
+    
+    generator = ArticleGenerator()
+    
+    result = await generator.generate(
+        topic=request.topic,
+        target_url=request.target_url,
+        keywords=request.keywords,
+        ahrefs_data=request.ahrefs_data,
+        min_words=request.min_words,
+        include_brand_info=request.include_brand_info,
+        analyze_serp=request.analyze_serp,
+        perplexity_model=request.perplexity_model if request.perplexity_model else None,
+        main_llm_provider=llm,
+        force_generate=request.force_generate
+    )
+    
+    if result.success:
+        return {
+            "success": True,
+            "article_id": result.article.id,
+            "title": result.article.title,
+            "word_count": result.article.word_count,
+            "article_html": result.article_html,
+            "article_markdown": result.article_markdown,
+            "usage": result.usage,
+            # SEO Structure Features
+            "schema_json_ld": result.schema_json_ld,
+            "schema_html_script": result.schema_html_script,
+            "table_of_contents": result.table_of_contents,
+            "featured_snippet_suggestions": result.featured_snippet_suggestions
+        }
+    else:
+        return {
+            "success": False,
+            "error": result.error,
+            "similar_exists": result.similar_exists,
+            "similar_articles": [
+                {"id": a.id, "title": a.title, "similarity": a.similarity_score}
+                for a in result.similar_articles
+            ] if result.similar_articles else []
+        }
+
+
+@app.post("/api/seo/analyze-url")
+async def seo_analyze_target_url(url: str):
+    """Analyze target website theme and structure"""
+    from src.plugins.url_analyzer import URLAnalyzerPlugin
+    
+    analyzer = URLAnalyzerPlugin()
+    result = await analyzer.execute(url, extract_links=True, max_content_length=5000)
+    
+    if result.success:
+        return {
+            "success": True,
+            "url": url,
+            "title": result.data.get("title", ""),
+            "description": result.data.get("description", ""),
+            "content_preview": result.data.get("content", "")[:1000],
+            "links": result.data.get("links", [])[:10]
+        }
+    else:
+        return {"success": False, "error": result.error}
+
+
+@app.post("/api/seo/serp-analysis")
+async def run_serp_analysis(keyword: str, max_results: int = 5):
+    """Analyze SERP competition for keyword"""
+    analyzer = SERPAnalyzer()
+    result = await analyzer.analyze(keyword, max_competitors=max_results)
+    
+    return {
+        "keyword": result.keyword,
+        "competitors": [
+            {
+                "position": c.position,
+                "title": c.title,
+                "url": c.url,
+                "domain": c.domain,
+                "snippet": c.snippet
+            }
+            for c in result.competitors
+        ],
+        "common_themes": result.common_themes,
+        "content_gaps": result.content_gaps,
+        "suggested_angles": result.suggested_angles,
+        "avg_word_count": result.avg_word_count
+    }
+
+
+class DeepCompetitorRequest(BaseModel):
+    keyword: str
+    competitor_urls: List[str]
+    our_content: str = ""
+
+
+@app.post("/api/seo/competitor-analysis")
+async def run_deep_competitor_analysis(request: DeepCompetitorRequest):
+    """
+    Deep competitor analysis: heading structure, word count, topic gaps
+    
+    Features:
+    - Scrapes H1-H6 structure from each URL
+    - Calculates word count statistics
+    - Identifies common headings across competitors
+    - NLP topic extraction and gap analysis
+    """
+    from src.seo import CompetitorAnalyzer
+    
+    analyzer = CompetitorAnalyzer()
+    result = await analyzer.analyze_competitors(
+        keyword=request.keyword,
+        competitor_urls=request.competitor_urls,
+        our_content=request.our_content
+    )
+    
+    # Generate recommendations
+    recommendations = analyzer.generate_recommendations(result)
+    
+    return {
+        "keyword": result.keyword,
+        "analyzed_count": len(result.competitors),
+        "competitors": [
+            {
+                "url": c.url,
+                "title": c.title,
+                "word_count": c.word_count,
+                "headings": [{"level": h.level, "text": h.text} for h in c.headings[:20]],
+                "main_topics": c.main_topics[:10],
+                "error": c.fetch_error
+            }
+            for c in result.competitors
+        ],
+        "word_count_stats": {
+            "avg": result.avg_word_count,
+            "min": result.min_word_count,
+            "max": result.max_word_count,
+            "recommended": result.recommended_word_count
+        },
+        "common_headings": result.common_headings[:15],
+        "heading_patterns": result.common_heading_patterns,
+        "all_topics": result.all_topics[:20],
+        "missing_topics": result.missing_topics,
+        "topic_frequency": result.topic_frequency,
+        "recommendations": recommendations,
+        "context_for_llm": result.to_context_string()
+    }
+
+
+class AhrefsImportRequest(BaseModel):
+    text_content: str = ""
+
+
+@app.post("/api/seo/import-ahrefs")
+async def import_ahrefs_data(
+    request: AhrefsImportRequest = None,
+    file: UploadFile = File(None)
+):
+    """Import keywords data from Ahrefs export (CSV or pasted text)"""
+    importer = AhrefsImporter()
+    
+    content = ""
+    source = "text"
+    
+    if file:
+        content = (await file.read()).decode("utf-8")
+        source = "csv" if file.filename.endswith(".csv") else "text"
+    elif request and request.text_content:
+        content = request.text_content
+    else:
+        return {"success": False, "error": "No data provided"}
+    
+    if source == "csv":
+        result = importer.parse_csv(content)
+    else:
+        result = importer.parse_text(content)
+    
+    return {
+        "success": True,
+        "source": result.source,
+        "keywords_count": len(result.keywords),
+        "keywords": [
+            {
+                "keyword": kw.keyword,
+                "volume": kw.volume,
+                "difficulty": kw.difficulty,
+                "cpc": kw.cpc
+            }
+            for kw in result.keywords[:50]  # Max 50 for response
+        ],
+        "primary_keywords": result.get_primary_keywords(),
+        "low_difficulty_keywords": result.get_low_difficulty()
+    }
+
+
+@app.get("/api/seo/brand-info")
+async def get_brand_info():
+    """Get configured brand information"""
+    manager = BrandInfoManager()
+    info = manager.load()
+    return info.to_dict()
+
+
+@app.put("/api/seo/brand-info")
+async def update_brand_info(request: BrandInfoRequest):
+    """Update brand/company information"""
+    manager = BrandInfoManager()
+    
+    info = BrandInfo(
+        name=request.name,
+        description=request.description,
+        value_proposition=request.value_proposition,
+        tone_of_voice=request.tone_of_voice,
+        key_products=request.key_products,
+        target_audience=request.target_audience,
+        unique_selling_points=request.unique_selling_points,
+        preferred_cta=request.preferred_cta,
+        do_not_mention=request.do_not_mention
+    )
+    
+    success = manager.save(info)
+    
+    return {
+        "success": success,
+        "brand_info": info.to_dict()
+    }
+
+
+@app.get("/api/seo/articles")
+async def list_seo_articles(limit: int = 50):
+    """List generated articles from storage"""
+    storage = ArticleStorage()
+    
+    try:
+        articles = await storage.list_all(limit=limit)
+        return {
+            "success": True,
+            "count": len(articles),
+            "articles": [
+                {
+                    "id": a.id,
+                    "title": a.title,
+                    "topic": a.topic,
+                    "target_url": a.target_url,
+                    "word_count": a.word_count,
+                    "created_at": a.created_at
+                }
+                for a in articles
+            ]
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e), "articles": []}
+
+
+@app.get("/api/seo/articles/{article_id}")
+async def get_seo_article(article_id: str):
+    """Get specific article by ID"""
+    storage = ArticleStorage()
+    
+    article = await storage.get(article_id)
+    if not article:
+        raise HTTPException(status_code=404, detail="Article not found")
+    
+    return {
+        "id": article.id,
+        "title": article.title,
+        "topic": article.topic,
+        "target_url": article.target_url,
+        "keywords": article.keywords,
+        "word_count": article.word_count,
+        "created_at": article.created_at,
+        "updated_at": article.updated_at,
+        "content_markdown": article.content,
+        "content_html": article.content_html
+    }
+
+
+class ArticleImproveRequest(BaseModel):
+    instructions: str
+    provider: str = "openai"
+    model: str = "gpt-4o"
+
+
+@app.post("/api/seo/articles/{article_id}/improve")
+async def improve_seo_article(article_id: str, request: ArticleImproveRequest):
+    """Improve existing article with new instructions"""
+    from src.llm_providers import DeepSeekProvider
+    
+    # Create LLM provider
+    if request.provider == "openai":
+        llm = OpenAIProvider(model=request.model)
+    elif request.provider == "grok":
+        llm = GrokProvider(model=request.model)
+    elif request.provider == "deepseek":
+        llm = DeepSeekProvider(model=request.model)
+    elif request.provider == "openrouter":
+        llm = OpenRouterProvider(model=request.model)
+    else:
+        llm = GeminiProvider(model=request.model)
+    
+    generator = ArticleGenerator()
+    result = await generator.improve(article_id, request.instructions, llm)
+    
+    if result.success:
+        return {
+            "success": True,
+            "article_id": result.article.id,
+            "title": result.article.title,
+            "word_count": result.article.word_count,
+            "article_html": result.article_html,
+            "article_markdown": result.article_markdown,
+            "usage": result.usage
+        }
+    else:
+        return {"success": False, "error": result.error}
+
+
+@app.delete("/api/seo/articles/{article_id}")
+async def delete_seo_article(article_id: str):
+    """Delete an article"""
+    storage = ArticleStorage()
+    success = await storage.delete(article_id)
+    
+    if not success:
+        raise HTTPException(status_code=404, detail="Article not found")
+    
+    return {"success": True, "message": "Article deleted"}
 
 
 # ========== RUN ==========
