@@ -76,7 +76,7 @@ class LLMProvider(ABC):
     """Abstrakcyjna klasa bazowa dla providerów LLM"""
     
     @abstractmethod
-    async def generate(self, system_prompt: str, user_prompt: str, temperature: float = 0.7) -> LLMResponse:
+    async def generate(self, system_prompt: str, user_prompt: str, temperature: float = 0.7, max_tokens: Optional[int] = None) -> LLMResponse:
         """Generuje odpowiedź na podstawie promptów, zwraca LLMResponse z usage"""
         pass
     
@@ -108,14 +108,15 @@ class OpenAIProvider(LLMProvider):
         self.client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
         self.model = model
     
-    async def generate(self, system_prompt: str, user_prompt: str, temperature: float = 0.7) -> LLMResponse:
+    async def generate(self, system_prompt: str, user_prompt: str, temperature: float = 0.7, max_tokens: Optional[int] = None) -> LLMResponse:
         response = await self.client.chat.completions.create(
             model=self.model,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
             ],
-            temperature=temperature
+            temperature=temperature,
+            max_tokens=max_tokens
         )
         
         usage = response.usage
@@ -163,14 +164,15 @@ class GrokProvider(LLMProvider):
         )
         self.model = model
     
-    async def generate(self, system_prompt: str, user_prompt: str, temperature: float = 0.7) -> LLMResponse:
+    async def generate(self, system_prompt: str, user_prompt: str, temperature: float = 0.7, max_tokens: Optional[int] = None) -> LLMResponse:
         response = await self.client.chat.completions.create(
             model=self.model,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
             ],
-            temperature=temperature
+            temperature=temperature,
+            max_tokens=max_tokens
         )
         
         usage = response.usage
@@ -189,7 +191,8 @@ class GrokProvider(LLMProvider):
         self, 
         system_prompt: str, 
         user_prompt: str, 
-        temperature: float = 0.7
+        temperature: float = 0.7,
+        max_tokens: Optional[int] = None
     ) -> AsyncGenerator[str, None]:
         """Streamuje tokeny odpowiedzi z Grok (OpenAI-compatible API)"""
         response = await self.client.chat.completions.create(
@@ -199,7 +202,8 @@ class GrokProvider(LLMProvider):
                 {"role": "user", "content": user_prompt}
             ],
             temperature=temperature,
-            stream=True
+            stream=True,
+            max_tokens=max_tokens
         )
         
         async for chunk in response:
@@ -216,11 +220,16 @@ class GeminiProvider(LLMProvider):
         self.model = genai.GenerativeModel(model)
         self.model_name = model
     
-    async def generate(self, system_prompt: str, user_prompt: str, temperature: float = 0.7) -> LLMResponse:
+    async def generate(self, system_prompt: str, user_prompt: str, temperature: float = 0.7, max_tokens: Optional[int] = None) -> LLMResponse:
         full_prompt = f"{system_prompt}\n\n---\n\n{user_prompt}"
+        
+        generation_config = {"temperature": temperature}
+        if max_tokens:
+            generation_config["max_output_tokens"] = max_tokens
+
         response = await self.model.generate_content_async(
             full_prompt,
-            generation_config={"temperature": temperature}
+            generation_config=generation_config
         )
         
         # Gemini usage metadata
@@ -250,9 +259,13 @@ class GeminiProvider(LLMProvider):
         """Streamuje tokeny odpowiedzi z Gemini"""
         full_prompt = f"{system_prompt}\n\n---\n\n{user_prompt}"
         
+        generation_config = {"temperature": temperature}
+        if max_tokens:
+            generation_config["max_output_tokens"] = max_tokens
+
         response = await self.model.generate_content_async(
             full_prompt,
-            generation_config={"temperature": temperature},
+            generation_config=generation_config,
             stream=True
         )
         
@@ -272,14 +285,15 @@ class DeepSeekProvider(LLMProvider):
         )
         self.model = model
     
-    async def generate(self, system_prompt: str, user_prompt: str, temperature: float = 0.7) -> LLMResponse:
+    async def generate(self, system_prompt: str, user_prompt: str, temperature: float = 0.7, max_tokens: Optional[int] = None) -> LLMResponse:
         response = await self.client.chat.completions.create(
             model=self.model,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
             ],
-            temperature=temperature
+            temperature=temperature,
+            max_tokens=max_tokens
         )
         
         usage = response.usage
@@ -298,7 +312,8 @@ class DeepSeekProvider(LLMProvider):
         self, 
         system_prompt: str, 
         user_prompt: str, 
-        temperature: float = 0.7
+        temperature: float = 0.7,
+        max_tokens: Optional[int] = None
     ) -> AsyncGenerator[str, None]:
         """Streamuje tokeny odpowiedzi z DeepSeek"""
         response = await self.client.chat.completions.create(
@@ -308,7 +323,8 @@ class DeepSeekProvider(LLMProvider):
                 {"role": "user", "content": user_prompt}
             ],
             temperature=temperature,
-            stream=True
+            stream=True,
+            max_tokens=max_tokens
         )
         
         async for chunk in response:
@@ -333,14 +349,15 @@ class PerplexityProvider(LLMProvider):
         )
         self.model = model
     
-    async def generate(self, system_prompt: str, user_prompt: str, temperature: float = 0.7) -> LLMResponse:
+    async def generate(self, system_prompt: str, user_prompt: str, temperature: float = 0.7, max_tokens: Optional[int] = None) -> LLMResponse:
         response = await self.client.chat.completions.create(
             model=self.model,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
             ],
-            temperature=temperature
+            temperature=temperature,
+            max_tokens=max_tokens
         )
         
         usage = response.usage
@@ -359,7 +376,8 @@ class PerplexityProvider(LLMProvider):
         self, 
         system_prompt: str, 
         user_prompt: str, 
-        temperature: float = 0.7
+        temperature: float = 0.7,
+        max_tokens: Optional[int] = None
     ) -> AsyncGenerator[str, None]:
         """Streamuje tokeny odpowiedzi z Perplexity"""
         response = await self.client.chat.completions.create(
@@ -369,7 +387,8 @@ class PerplexityProvider(LLMProvider):
                 {"role": "user", "content": user_prompt}
             ],
             temperature=temperature,
-            stream=True
+            stream=True,
+            max_tokens=max_tokens
         )
         
         async for chunk in response:
@@ -390,7 +409,7 @@ class OpenRouterProvider(LLMProvider):
         )
         self.model = model
     
-    async def generate(self, system_prompt: str, user_prompt: str, temperature: float = 0.7) -> LLMResponse:
+    async def generate(self, system_prompt: str, user_prompt: str, temperature: float = 0.7, max_tokens: Optional[int] = None) -> LLMResponse:
         # OpenRouter often requires 'referer' and 'title' headers, 
         # but the OpenAI client doesn't make it easy to add custom headers globally without hacks.
         # However, it usually works without them for basic access or if configured in the dashboard.
@@ -405,6 +424,7 @@ class OpenRouterProvider(LLMProvider):
                 {"role": "user", "content": user_prompt}
             ],
             temperature=temperature,
+            max_tokens=max_tokens,
             # extra_headers={
             #     "HTTP-Referer": "http://localhost:8000", 
             #     "X-Title": "Local App"
@@ -438,6 +458,7 @@ class OpenRouterProvider(LLMProvider):
             ],
             temperature=temperature,
             stream=True,
+            max_tokens=max_tokens,
             # extra_headers={
             #     "HTTP-Referer": "http://localhost:8000", 
             #     "X-Title": "Local App"

@@ -62,8 +62,36 @@
                 </button>
             </div>
 
-            <!-- Sessions List -->
-            <nav class="flex-1 px-3 overflow-y-auto">
+            <!-- Modules Menu -->
+            <nav class="flex-1 px-3 overflow-y-auto modules-nav">
+                <p class="px-3 text-xs font-semibold text-text-secondary uppercase tracking-wider mb-2">Moduły</p>
+                <div class="space-y-1 mb-6">
+                    <button onclick="navigateTo('dashboard')"
+                        class="w-full flex items-center gap-3 px-3 py-2 text-sm font-medium rounded-lg transition-colors text-slate-900 dark:text-white bg-slate-100 dark:bg-white/10">
+                        <span class="material-symbols-outlined text-[20px]">dashboard</span>
+                        Narada (Chat)
+                    </button>
+                    <button onclick="navigateTo('seo')"
+                        class="w-full flex items-center gap-3 px-3 py-2 text-sm font-medium rounded-lg transition-colors text-text-secondary hover:text-slate-900 dark:hover:text-white hover:bg-slate-50 dark:hover:bg-white/5">
+                        <span class="material-symbols-outlined text-[20px]">edit_note</span>
+                        Generator SEO
+                    </button>
+                    <button onclick="navigateTo('agents')"
+                        class="w-full flex items-center gap-3 px-3 py-2 text-sm font-medium rounded-lg transition-colors text-text-secondary hover:text-slate-900 dark:hover:text-white hover:bg-slate-50 dark:hover:bg-white/5">
+                        <span class="material-symbols-outlined text-[20px]">group</span>
+                        Agenci
+                    </button>
+                    <button onclick="navigateTo('plugins')"
+                        class="w-full flex items-center gap-3 px-3 py-2 text-sm font-medium rounded-lg transition-colors text-text-secondary hover:text-slate-900 dark:hover:text-white hover:bg-slate-50 dark:hover:bg-white/5">
+                        <span class="material-symbols-outlined text-[20px]">extension</span>
+                        Wtyczki
+                    </button>
+                    <button onclick="navigateTo('agent-builder')"
+                        class="w-full flex items-center gap-3 px-3 py-2 text-sm font-medium rounded-lg transition-colors text-text-secondary hover:text-slate-900 dark:hover:text-white hover:bg-slate-50 dark:hover:bg-white/5">
+                        <span class="material-symbols-outlined text-[20px]">build</span>
+                        Kreator
+                    </button>
+                </div>
                 <p class="px-3 text-xs font-semibold text-text-secondary uppercase tracking-wider mb-2">Sesje</p>
                 <div id="recent-sessions" class="space-y-0.5">
                     <p class="px-3 text-xs text-text-secondary/50 italic">Brak zapisanych sesji</p>
