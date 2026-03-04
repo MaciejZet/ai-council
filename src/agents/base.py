@@ -25,6 +25,7 @@ class AgentResponse:
     completion_tokens: int = 0
     total_tokens: int = 0
     model: str = ""
+    reacting_to: Optional[str] = None
     
     @property
     def usage(self) -> Dict[str, int]:

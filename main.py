@@ -27,9 +27,6 @@ from src.council.orchestrator import Council, CouncilDeliberation, format_delibe
 from src.council.debate import DebateOrchestrator
 from src.knowledge.ingest import ingest_pdf, get_ingestion_stats
 from src.knowledge.retriever import get_category_emoji, query_knowledge, format_sources_for_display
-from src.council.debate import DebateOrchestrator
-from src.knowledge.ingest import ingest_pdf, get_ingestion_stats
-from src.knowledge.retriever import get_category_emoji, query_knowledge, format_sources_for_display
 from src.llm_providers import OpenAIProvider, GrokProvider, GeminiProvider, DeepSeekProvider, OpenRouterProvider, AVAILABLE_PROVIDERS, get_provider
 from src.plugins import get_plugin_manager, PluginResult
 from src.plugins.web_search import TavilySearchPlugin, DuckDuckGoSearchPlugin

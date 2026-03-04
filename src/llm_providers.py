@@ -251,14 +251,15 @@ class GeminiProvider(LLMProvider):
         return f"Gemini ({self.model_name})"
     
     async def generate_stream(
-        self, 
-        system_prompt: str, 
-        user_prompt: str, 
-        temperature: float = 0.7
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        temperature: float = 0.7,
+        max_tokens: Optional[int] = None
     ) -> AsyncGenerator[str, None]:
         """Streamuje tokeny odpowiedzi z Gemini"""
         full_prompt = f"{system_prompt}\n\n---\n\n{user_prompt}"
-        
+
         generation_config = {"temperature": temperature}
         if max_tokens:
             generation_config["max_output_tokens"] = max_tokens
