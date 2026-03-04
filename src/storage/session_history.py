@@ -7,6 +7,7 @@ Zapisuje i wczytuje historię narad do/z plików JSON
 import os
 import json
 import uuid
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Any, Optional
@@ -83,10 +84,17 @@ class SessionHistory:
             ID sesji
         """
         session_path = self._get_session_path(session.metadata.id)
-        
-        with open(session_path, "w", encoding="utf-8") as f:
-            json.dump(session.to_dict(), f, ensure_ascii=False, indent=2)
-        
+
+        fd, temp_path = tempfile.mkstemp(dir=self.sessions_dir, suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(session.to_dict(), f, ensure_ascii=False, indent=2)
+            os.replace(temp_path, session_path)
+        except Exception:
+            if os.path.exists(temp_path):
+                os.unlink(temp_path)
+            raise
+
         return session.metadata.id
     
     def load_session(self, session_id: str) -> Optional[SessionData]:

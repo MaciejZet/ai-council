@@ -241,6 +241,9 @@ async def get_providers():
 async def deliberate(request: DeliberateRequest):
     """Run council deliberation"""
     
+    if len(request.query) > 50000:
+        raise HTTPException(status_code=400, detail="Query too long (max 50 000 characters)")
+
     # Build full query with attachment
     full_query = request.query
     if request.attachment_text:
@@ -877,8 +880,8 @@ async def test_custom_agent(request: AgentTestRequest):
         try:
             chunks = query_knowledge(request.query, top_k=3)
             context = [c["text"] for c in chunks]
-        except:
-            pass
+        except Exception as e:
+            print(f"⚠️ KB query failed during agent test: {e}")
     
     # Run analysis
     response = await agent.analyze(request.query, context)

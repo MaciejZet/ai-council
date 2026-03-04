@@ -294,7 +294,8 @@ def _format_date(iso_timestamp: str) -> str:
     try:
         dt = datetime.fromisoformat(iso_timestamp)
         return dt.strftime("%d.%m.%Y, %H:%M")
-    except:
+    except (ValueError, TypeError) as e:
+        print(f"⚠️ Date parsing failed for '{iso_timestamp}': {e}")
         return iso_timestamp
 
 

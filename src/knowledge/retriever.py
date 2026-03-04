@@ -15,10 +15,14 @@ load_dotenv()
 def get_pinecone_index():
     """Zwraca połączony index Pinecone"""
     from pinecone import Pinecone
-    
-    pc = Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
+
+    api_key = os.getenv("PINECONE_API_KEY")
+    if not api_key:
+        raise ValueError("PINECONE_API_KEY not configured. Knowledge base unavailable.")
+
+    pc = Pinecone(api_key=api_key)
     index_name = os.getenv("PINECONE_INDEX_NAME", "ebook-library")
-    
+
     return pc.Index(index_name)
 
 

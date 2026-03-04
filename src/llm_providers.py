@@ -445,10 +445,11 @@ class OpenRouterProvider(LLMProvider):
         return f"OpenRouter ({self.model})"
     
     async def generate_stream(
-        self, 
-        system_prompt: str, 
-        user_prompt: str, 
-        temperature: float = 0.7
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        temperature: float = 0.7,
+        max_tokens: Optional[int] = None
     ) -> AsyncGenerator[str, None]:
         """Streamuje tokeny odpowiedzi z OpenRouter"""
         response = await self.client.chat.completions.create(
