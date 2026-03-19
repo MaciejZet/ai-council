@@ -90,7 +90,8 @@ class LLMProvider(ABC):
         self, 
         system_prompt: str, 
         user_prompt: str, 
-        temperature: float = 0.7
+        temperature: float = 0.7,
+        max_tokens: Optional[int] = None
     ) -> AsyncGenerator[str, None]:
         """Streamuje tokeny odpowiedzi jeden po drugim"""
         pass
@@ -135,7 +136,8 @@ class OpenAIProvider(LLMProvider):
         self, 
         system_prompt: str, 
         user_prompt: str, 
-        temperature: float = 0.7
+        temperature: float = 0.7,
+        max_tokens: Optional[int] = None
     ) -> AsyncGenerator[str, None]:
         """Streamuje tokeny odpowiedzi z OpenAI"""
         response = await self.client.chat.completions.create(
@@ -145,7 +147,8 @@ class OpenAIProvider(LLMProvider):
                 {"role": "user", "content": user_prompt}
             ],
             temperature=temperature,
-            stream=True
+            stream=True,
+            max_tokens=max_tokens
         )
         
         async for chunk in response:
@@ -254,7 +257,8 @@ class GeminiProvider(LLMProvider):
         self, 
         system_prompt: str, 
         user_prompt: str, 
-        temperature: float = 0.7
+        temperature: float = 0.7,
+        max_tokens: Optional[int] = None
     ) -> AsyncGenerator[str, None]:
         """Streamuje tokeny odpowiedzi z Gemini"""
         full_prompt = f"{system_prompt}\n\n---\n\n{user_prompt}"
@@ -447,7 +451,8 @@ class OpenRouterProvider(LLMProvider):
         self, 
         system_prompt: str, 
         user_prompt: str, 
-        temperature: float = 0.7
+        temperature: float = 0.7,
+        max_tokens: Optional[int] = None
     ) -> AsyncGenerator[str, None]:
         """Streamuje tokeny odpowiedzi z OpenRouter"""
         response = await self.client.chat.completions.create(
