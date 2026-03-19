@@ -105,7 +105,7 @@ class OpenAIProvider(LLMProvider):
     
     def __init__(self, model: str = "gpt-4o"):
         from openai import AsyncOpenAI
-        self.client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        self.client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY", "dummy"))
         self.model = model
     
     async def generate(self, system_prompt: str, user_prompt: str, temperature: float = 0.7, max_tokens: Optional[int] = None) -> LLMResponse:
@@ -159,7 +159,7 @@ class GrokProvider(LLMProvider):
     def __init__(self, model: str = "grok-beta"):
         from openai import AsyncOpenAI
         self.client = AsyncOpenAI(
-            api_key=os.getenv("GROK_API_KEY"),
+            api_key=os.getenv("GROK_API_KEY", "dummy"),
             base_url="https://api.x.ai/v1"
         )
         self.model = model
@@ -216,7 +216,7 @@ class GeminiProvider(LLMProvider):
     
     def __init__(self, model: str = "gemini-1.5-pro"):
         import google.generativeai as genai
-        genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+        genai.configure(api_key=os.getenv("GEMINI_API_KEY", "dummy"))
         self.model = genai.GenerativeModel(model)
         self.model_name = model
     
@@ -280,7 +280,7 @@ class DeepSeekProvider(LLMProvider):
     def __init__(self, model: str = "deepseek-chat"):
         from openai import AsyncOpenAI
         self.client = AsyncOpenAI(
-            api_key=os.getenv("DEEPSEEK_API_KEY"),
+            api_key=os.getenv("DEEPSEEK_API_KEY", "dummy"),
             base_url="https://api.deepseek.com"
         )
         self.model = model
@@ -344,7 +344,7 @@ class PerplexityProvider(LLMProvider):
     def __init__(self, model: str = "sonar-pro"):
         from openai import AsyncOpenAI
         self.client = AsyncOpenAI(
-            api_key=os.getenv("PERPLEXITY_API_KEY"),
+            api_key=os.getenv("PERPLEXITY_API_KEY", "dummy"),
             base_url="https://api.perplexity.ai"
         )
         self.model = model
@@ -404,7 +404,7 @@ class OpenRouterProvider(LLMProvider):
     def __init__(self, model: str = "google/gemini-2.0-flash-exp:free"):
         from openai import AsyncOpenAI
         self.client = AsyncOpenAI(
-            api_key=os.getenv("OPENROUTER_API_KEY"),
+            api_key=os.getenv("OPENROUTER_API_KEY", "dummy"),
             base_url="https://openrouter.ai/api/v1"
         )
         self.model = model
