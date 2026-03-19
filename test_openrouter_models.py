@@ -1,3 +1,4 @@
+import pytest
 import os
 import asyncio
 from dotenv import load_dotenv
@@ -5,6 +6,8 @@ from openai import AsyncOpenAI
 
 load_dotenv()
 
+@pytest.mark.asyncio
+@pytest.mark.asyncio
 async def test_openrouter_models():
     api_key = os.getenv("OPENROUTER_API_KEY")
     if not api_key or api_key == "your_openrouter_key_here":
