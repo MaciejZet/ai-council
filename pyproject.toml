@@ -73,23 +73,12 @@ Documentation = "https://github.com/yourusername/ai-council#readme"
 Repository = "https://github.com/yourusername/ai-council"
 Issues = "https://github.com/yourusername/ai-council/issues"
 
-[project.scripts]
-ai-council = "main:main"
-
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
-[tool.uv]
-dev-dependencies = [
-    "pytest>=7.4.0",
-    "pytest-asyncio>=0.21.0",
-    "pytest-cov>=4.1.0",
-    "black>=23.0.0",
-    "flake8>=6.0.0",
-    "mypy>=1.5.0",
-    "ruff>=0.1.0",
-]
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
 
 [tool.black]
 line-length = 100

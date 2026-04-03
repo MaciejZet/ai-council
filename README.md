@@ -49,20 +49,24 @@ python start.py
 
 Application available at: **http://localhost:8000**
 
-### Option 2: With UV (10-100x faster installation!)
+### Option 2: With uv (recommended — lockfile + fast installs)
+
+Dependencies are resolved in **`pyproject.toml`** and pinned in **`uv.lock`**. Dev tools (pytest, ruff, …) are in the **`dev`** extra.
 
 ```bash
-# 1. Install UV (if not already installed)
-# Windows
-powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
-# macOS/Linux
-curl -LsSf https://astral.sh/uv/install.sh | sh
+# 1. Install uv (if needed)
+# Windows: powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
+# macOS/Linux: curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# 2. Run the quick start script
+# 2. One-shot: sync venv from lock + run (see start-uv scripts)
 # Windows
 start-uv.bat
 # macOS/Linux
-./start-uv.sh
+chmod +x start-uv.sh && ./start-uv.sh
+
+# Or manually:
+uv sync --extra dev
+uv run uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 ### Option 3: Manual (Traditional)

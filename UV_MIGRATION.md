@@ -55,14 +55,18 @@ source .venv/bin/activate
 ### 3. Install Dependencies
 
 ```bash
-# Install all dependencies (10-100x faster than pip!)
-uv pip install -e .
+# Recommended: project is installed from pyproject.toml + uv.lock
+uv sync --extra dev
 
-# Or install with dev dependencies
-uv pip install -e ".[dev]"
+# Legacy (editable install, no lock file discipline)
+# uv pip install -e ".[dev]"
+```
 
-# Or sync from lock file (if you have uv.lock)
-uv sync
+Run the app without activating the venv:
+
+```bash
+uv run uvicorn main:app --reload --host 0.0.0.0 --port 8000
+uv run pytest tests/ -v
 ```
 
 ### 4. Run the Application
