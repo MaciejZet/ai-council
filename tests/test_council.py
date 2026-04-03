@@ -2,8 +2,9 @@
 Tests for Council orchestration (explicit agent lists, synthesizer split).
 """
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 from src.agents.core_agents import Strategist, Synthesizer
 from src.council.orchestrator import Council

@@ -4,17 +4,21 @@ Basic Test Suite
 Unit tests for core functionality
 """
 
-import pytest
-import asyncio
-from unittest.mock import Mock, patch, AsyncMock
+from unittest.mock import Mock
 
-# Test validation
+import pytest
+from fastapi import HTTPException
+
+from src.llm_providers import calculate_cost
+from src.utils.cache import ResponseCache
+from src.utils.error_handler import ErrorHandler, retry_with_backoff
+from src.utils.health import HealthChecker
+from src.utils.rate_limit import RateLimiter
 from src.utils.validation import (
-    QueryRequest,
+    MAX_QUERY_LENGTH,
     CustomAgentRequest,
     FileUploadValidator,
-    validate_api_keys,
-    MAX_QUERY_LENGTH
+    QueryRequest,
 )
 
 
@@ -71,10 +75,6 @@ class TestValidation:
         assert "/" not in sanitized
 
 
-# Test rate limiting
-from src.utils.rate_limit import RateLimiter
-
-
 class TestRateLimiter:
     """Test rate limiting"""
 
@@ -102,14 +102,9 @@ class TestRateLimiter:
             await limiter.check_rate_limit(mock_request)
 
         # 6th request should fail
-        from fastapi import HTTPException
         with pytest.raises(HTTPException) as exc_info:
             await limiter.check_rate_limit(mock_request)
         assert exc_info.value.status_code == 429
-
-
-# Test error handling
-from src.utils.error_handler import retry_with_backoff, ErrorHandler
 
 
 class TestErrorHandler:
@@ -137,9 +132,9 @@ class TestErrorHandler:
         """Test retry exhaustion"""
         @retry_with_backoff(max_retries=2, initial_delay=0.1)
         async def always_fails():
-            raise Exception("Permanent error")
+            raise RuntimeError("Permanent error")
 
-        with pytest.raises(Exception):
+        with pytest.raises(RuntimeError):
             await always_fails()
 
     def test_api_error_handling(self):
@@ -149,10 +144,6 @@ class TestErrorHandler:
 
         assert result["error"] is True
         assert "rate limit" in result["user_message"].lower()
-
-
-# Test caching
-from src.utils.cache import ResponseCache
 
 
 class TestCache:
@@ -182,10 +173,6 @@ class TestCache:
         key_a = cache._generate_cache_key("q", "openai", "gpt-4o", True, "a" * 500)
         key_b = cache._generate_cache_key("q", "openai", "gpt-4o", True, "a" * 499 + "b")
         assert key_a != key_b
-
-
-# Test health checker
-from src.utils.health import HealthChecker
 
 
 class TestHealthChecker:
@@ -223,10 +210,6 @@ class TestHealthChecker:
         assert metrics["total_requests"] == 2
         assert metrics["total_tokens_used"] == 300
         assert metrics["total_cost_usd"] == 0.03
-
-
-# Test LLM cost calculation
-from src.llm_providers import calculate_cost
 
 
 class TestLLMProviders:
