@@ -7,7 +7,7 @@ Centralized logging with proper levels, formatting, and context
 import logging
 import sys
 from pathlib import Path
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Optional, Dict, Any
 import json
 
@@ -21,7 +21,7 @@ class JSONFormatter(logging.Formatter):
 
     def format(self, record: logging.LogRecord) -> str:
         log_data = {
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "level": record.levelname,
             "logger": record.name,
             "message": record.getMessage(),
@@ -80,8 +80,10 @@ def setup_logger(
         if hasattr(console_handler.stream, 'reconfigure'):
             try:
                 console_handler.stream.reconfigure(encoding='utf-8')
-            except:
-                pass
+            except Exception as e:
+                logging.getLogger(__name__).debug(
+                    "Console stream UTF-8 reconfigure skipped: %s", e
+                )
 
         logger.addHandler(console_handler)
 

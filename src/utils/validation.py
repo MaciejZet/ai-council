@@ -5,8 +5,9 @@ Validates user inputs, prevents injection attacks, enforces limits
 """
 
 import re
-from typing import Optional, List, Dict, Any
-from pydantic import BaseModel, Field, validator, ValidationError
+from typing import Any, Dict, List, Optional
+
+from pydantic import BaseModel, Field, ValidationError, field_validator
 from fastapi import HTTPException
 
 
@@ -35,15 +36,24 @@ class QueryRequest(BaseModel):
     use_knowledge_base: bool = Field(default=True)
     chat_mode: bool = Field(default=False)
     attachment_text: str = Field(default="", max_length=MAX_ATTACHMENT_SIZE)
-    history: Optional[List[Dict[str, Any]]] = Field(default=None, max_items=MAX_HISTORY_ITEMS)
+    history: Optional[List[Dict[str, Any]]] = Field(default=None, max_length=MAX_HISTORY_ITEMS)
     # Routing: auto = subset of agents by intent; full = all four core agents
     routing_mode: str = Field(default="auto", pattern="^(auto|full)$")
     # Server-side session persistence (data/sessions)
     persist_session: bool = Field(default=False)
     session_id: Optional[str] = Field(default=None, max_length=128)
+    # Quality & KB
+    behavior_preset: str = Field(
+        default="default",
+        pattern="^(default|short|with_sources|kb_only)$",
+    )
+    enable_critic: bool = Field(default=False)
+    enable_weighted_voting: bool = Field(default=False)
+    hybrid_search: bool = Field(default=False)
 
-    @validator("query")
-    def validate_query(cls, v):
+    @field_validator("query")
+    @classmethod
+    def validate_query(cls, v: str) -> str:
         """Check for suspicious patterns"""
         v_lower = v.lower()
         for pattern in SUSPICIOUS_PATTERNS:
@@ -51,8 +61,9 @@ class QueryRequest(BaseModel):
                 raise ValueError(f"Query contains suspicious pattern: {pattern}")
         return v.strip()
 
-    @validator("history")
-    def validate_history(cls, v):
+    @field_validator("history")
+    @classmethod
+    def validate_history(cls, v: Optional[List[Dict[str, Any]]]) -> Optional[List[Dict[str, Any]]]:
         """Validate history structure (chat UI or role-based)."""
         if v is None:
             return v
@@ -78,11 +89,12 @@ class CustomAgentRequest(BaseModel):
     role: str = Field(..., min_length=1, max_length=200)
     persona: str = Field(..., min_length=10, max_length=2000)
     system_prompt: str = Field(..., min_length=10, max_length=5000)
-    tools: List[str] = Field(default_factory=list, max_items=20)
+    tools: List[str] = Field(default_factory=list, max_length=20)
     context_limit: int = Field(default=8000, ge=1000, le=128000)
 
-    @validator("name")
-    def validate_name(cls, v):
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v: str) -> str:
         """Ensure name is alphanumeric with spaces/dashes"""
         if not re.match(r"^[a-zA-Z0-9\s\-_]+$", v):
             raise ValueError("Name must contain only letters, numbers, spaces, dashes, and underscores")

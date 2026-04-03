@@ -73,6 +73,17 @@ class RequestQueue {
 // Global request queue
 const requestQueue = new RequestQueue();
 
+const USER_SESSION_STORAGE_KEY = 'ai_council_user_session_token';
+
+function userSessionHeader() {
+    try {
+        const t = localStorage.getItem(USER_SESSION_STORAGE_KEY);
+        return t ? { 'X-User-Session': t } : {};
+    } catch {
+        return {};
+    }
+}
+
 /**
  * Fetch with automatic retry and exponential backoff
  */
@@ -83,6 +94,7 @@ async function fetchWithRetry(url, options = {}, maxRetries = 3) {
     if (!options.headers) {
         options.headers = {};
     }
+    Object.assign(options.headers, userSessionHeader());
     options.headers['X-API-Keys'] = apiKeyManager.encodeKeys();
 
     for (let attempt = 0; attempt < maxRetries; attempt++) {
@@ -145,6 +157,7 @@ async function streamWithFetch(url, data, onEvent, onError, onComplete) {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
+                ...userSessionHeader(),
                 'X-API-Keys': encodedKeys
             },
             body: JSON.stringify(data)

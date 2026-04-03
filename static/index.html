@@ -132,9 +132,12 @@
                     </button>
                     <div>
                         <h2 class="text-lg font-bold leading-tight" id="main-title">Narada Rady AI</h2>
-                        <p class="text-xs text-text-secondary flex items-center gap-1">
+                        <p class="text-xs text-text-secondary flex items-center gap-1 flex-wrap">
                             <span class="w-2 h-2 rounded-full bg-green-500"></span>
                             <span id="agents-status">Aktywna • 5 Agentów</span>
+                            <span id="routing-intent-badge"
+                                class="hidden ml-2 px-2 py-0.5 rounded bg-primary/20 text-primary text-[10px] font-medium"
+                                title="Wykryta intencja zapytania (routing)"></span>
                         </p>
                     </div>
                 </div>
@@ -223,8 +226,9 @@
                             <textarea id="query-input"
                                 class="w-full bg-transparent border-none focus:ring-0 text-slate-900 dark:text-white placeholder:text-text-secondary px-4 py-4 min-h-[60px] max-h-[200px] resize-none font-body text-base"
                                 placeholder="Zadaj pytanie radzie AI..." rows="1"></textarea>
-                            <div class="flex items-center justify-between px-2 pb-2">
-                                <div class="flex items-center gap-1">
+                            <div class="flex flex-col gap-1 px-2 pb-2">
+                                <div class="flex items-center justify-between w-full">
+                                <div class="flex flex-wrap items-center gap-1">
                                     <label
                                         class="p-2 text-text-secondary hover:text-primary hover:bg-primary/10 rounded-lg transition-colors cursor-pointer"
                                         title="Załącz plik">
@@ -241,8 +245,20 @@
                                         <input type="checkbox" id="chat-toggle" class="rounded text-primary">
                                         <span>💬 Chat</span>
                                     </label>
+                                    <label
+                                        class="flex items-center gap-1 px-2 py-1 text-text-secondary hover:text-primary rounded-lg transition-colors cursor-pointer text-xs"
+                                        title="Zapisz wynik narady na serwerze (data/sessions)">
+                                        <input type="checkbox" id="persist-session-toggle" class="rounded text-primary">
+                                        <span>💾 Serwer</span>
+                                    </label>
+                                    <label
+                                        class="flex items-center gap-1 px-2 py-1 text-text-secondary hover:text-primary rounded-lg transition-colors cursor-pointer text-xs"
+                                        title="Użyj wszystkich 4 agentów (wyższy koszt). Wyłączone = automatyczny podzbiór.">
+                                        <input type="checkbox" id="routing-full-toggle" class="rounded text-primary">
+                                        <span>👥 Pełna rada</span>
+                                    </label>
                                 </div>
-                                <div class="flex items-center gap-3">
+                                <div class="flex items-center gap-3 shrink-0">
                                     <span id="file-indicator" class="hidden text-xs text-text-secondary">
                                         <span
                                             class="material-symbols-outlined text-[14px] align-middle">description</span>
@@ -252,6 +268,28 @@
                                         class="w-10 h-10 flex items-center justify-center bg-primary hover:bg-primary-hover text-white rounded-xl transition-all shadow-lg shadow-primary/20 hover:scale-105 active:scale-95">
                                         <span class="material-symbols-outlined text-[20px]">send</span>
                                     </button>
+                                </div>
+                                </div>
+                                <div class="flex flex-wrap items-center gap-2 pl-1 text-[11px] text-text-secondary w-full">
+                                    <select id="behavior-preset-select"
+                                        class="bg-white/5 dark:bg-black/20 border border-white/10 rounded-lg px-2 py-1 max-w-[11rem] text-xs">
+                                        <option value="default">Preset: domyślny</option>
+                                        <option value="short">Krótko</option>
+                                        <option value="with_sources">Ze źródłami</option>
+                                        <option value="kb_only">Tylko KB</option>
+                                    </select>
+                                    <label class="flex items-center gap-1 cursor-pointer" title="Krok redaktora przed syntezą">
+                                        <input type="checkbox" id="critic-toggle" class="rounded text-primary">
+                                        <span>Krytyk</span>
+                                    </label>
+                                    <label class="flex items-center gap-1 cursor-pointer" title="Synteza ważona wg ocen LLM">
+                                        <input type="checkbox" id="weighted-toggle" class="rounded text-primary">
+                                        <span>Wagi</span>
+                                    </label>
+                                    <label class="flex items-center gap-1 cursor-pointer" title="Hybryda: wektor + słowa kluczowe">
+                                        <input type="checkbox" id="hybrid-kb-toggle" class="rounded text-primary">
+                                        <span>Hybryda KB</span>
+                                    </label>
                                 </div>
                             </div>
                         </div>
@@ -961,6 +999,10 @@
                                     <button onclick="copySEOArticle('schema')"
                                         class="px-3 py-2 bg-white/10 hover:bg-white/20 rounded-lg text-sm transition-colors">
                                         📋 Schema
+                                    </button>
+                                    <button type="button" onclick="downloadSEOFullPage()"
+                                        class="px-3 py-2 bg-primary/20 hover:bg-primary/30 text-primary rounded-lg text-sm transition-colors">
+                                        ⬇ Pełna strona HTML
                                     </button>
                                 </div>
                             </div>

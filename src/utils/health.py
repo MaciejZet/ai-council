@@ -5,7 +5,7 @@ System health checks and metrics collection
 """
 
 from typing import Dict, Any, Optional
-from datetime import datetime
+from datetime import UTC, datetime
 import asyncio
 import os
 from dotenv import load_dotenv
@@ -22,7 +22,7 @@ class HealthChecker:
     """System health monitoring"""
 
     def __init__(self):
-        self.start_time = datetime.utcnow()
+        self.start_time = datetime.now(UTC)
         self.request_count = 0
         self.error_count = 0
         self.total_tokens_used = 0
@@ -37,8 +37,8 @@ class HealthChecker:
         """
         health_status = {
             "status": "healthy",
-            "timestamp": datetime.utcnow().isoformat(),
-            "uptime_seconds": (datetime.utcnow() - self.start_time).total_seconds(),
+            "timestamp": datetime.now(UTC).isoformat(),
+            "uptime_seconds": (datetime.now(UTC) - self.start_time).total_seconds(),
             "checks": {}
         }
 
@@ -170,7 +170,7 @@ class HealthChecker:
 
     def get_metrics(self) -> Dict[str, Any]:
         """Get current metrics"""
-        uptime = (datetime.utcnow() - self.start_time).total_seconds()
+        uptime = (datetime.now(UTC) - self.start_time).total_seconds()
 
         return {
             "uptime_seconds": uptime,

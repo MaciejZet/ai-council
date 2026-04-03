@@ -8,6 +8,7 @@ import asyncio
 import os
 import json
 import time
+import tempfile
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 from contextlib import asynccontextmanager
@@ -29,7 +30,14 @@ from src.council.orchestrator import Council, CouncilDeliberation, format_delibe
 from src.council.debate import DebateOrchestrator
 from src.council.routing import route_query
 from src.council.fast_mode import fast_response
-from src.knowledge.ingest import ingest_pdf, get_ingestion_stats
+from src.knowledge.ingest import (
+    ingest_pdf,
+    get_ingestion_stats,
+    ingest_url,
+    ingest_notion_page,
+    ingest_mixed_directory,
+    refresh_document_embeddings,
+)
 from src.knowledge.retriever import get_category_emoji, query_knowledge, format_sources_for_display
 from src.llm_providers import (
     OpenAIProvider,
@@ -60,6 +68,7 @@ from src.plugins.utilities import (
 )
 from src.storage.session_history import save_deliberation_to_session, session_history
 from src.agents.custom_validation import validate_custom_agent_payload
+from src.storage import user_db as user_store
 
 
 # ========== MODELS ==========
@@ -120,6 +129,44 @@ class DeliberationResult(BaseModel):
     usage: UsageData = UsageData()
     session_id: Optional[str] = None
     routing_intent: Optional[str] = None
+    behavior_preset: Optional[str] = None
+    critic_notes: Optional[str] = None
+    agent_weights: Optional[List[Dict[str, Any]]] = None
+
+
+class ProjectCreateRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=200)
+    config: Dict[str, Any] = Field(default_factory=dict)
+
+
+class ProjectUpdateRequest(BaseModel):
+    name: Optional[str] = Field(default=None, max_length=200)
+    config: Optional[Dict[str, Any]] = None
+
+
+class ShareCreateRequest(BaseModel):
+    session_id: Optional[str] = None
+    payload: Optional[Dict[str, Any]] = None
+
+
+class IngestUrlRequest(BaseModel):
+    url: str = Field(..., min_length=8, max_length=2000)
+    category: str = "ogólne"
+    tags: str = ""
+
+
+class IngestNotionRequest(BaseModel):
+    page_id: str = Field(..., min_length=8, max_length=200)
+    category: str = "ogólne"
+    tags: str = ""
+
+
+class IngestFolderRequest(BaseModel):
+    path: str = Field(..., min_length=1, max_length=2000)
+
+
+class RefreshDocRequest(BaseModel):
+    doc_id: str = Field(..., min_length=4, max_length=64)
 
 
 class CustomAgentRequest(BaseModel):
@@ -387,8 +434,15 @@ async def deliberate(request: Request):
     # Get API keys from request state
     api_keys = request.state.api_keys
 
+    quality_or_hybrid = (
+        validated.behavior_preset != "default"
+        or validated.enable_critic
+        or validated.enable_weighted_voting
+        or validated.hybrid_search
+    )
+
     # Response cache (identical non-chat requests; Redis optional)
-    if not validated.chat_mode:
+    if not validated.chat_mode and not quality_or_hybrid:
         cache = get_cache()
         if cache.enabled and not cache.client:
             await cache.connect()
@@ -458,6 +512,11 @@ async def deliberate(request: Request):
             full_query,
             agents=[*agents, synthesizer],
             include_synthesis=True,
+            llm=llm,
+            behavior_preset=validated.behavior_preset,
+            enable_critic=validated.enable_critic,
+            enable_weighted_voting=validated.enable_weighted_voting,
+            hybrid_search=validated.hybrid_search,
         )
         logger.info(f"Deliberation completed: {result.usage.total_tokens} tokens, ${result.usage.total_cost:.4f}")
     except Exception as e:
@@ -532,9 +591,12 @@ async def deliberate(request: Request):
         usage=usage,
         session_id=session_id_out,
         routing_intent=routing_decision.intent.value,
+        behavior_preset=result.behavior_preset,
+        critic_notes=result.critic_notes,
+        agent_weights=result.agent_weights,
     )
 
-    if not validated.chat_mode:
+    if not validated.chat_mode and not quality_or_hybrid:
         cache = get_cache()
         if cache.enabled and not cache.client:
             await cache.connect()
@@ -622,14 +684,12 @@ async def ingest_document(file: UploadFile = File(...)):
     """Import PDF to knowledge base"""
     if not file.filename.endswith('.pdf'):
         raise HTTPException(status_code=400, detail="Only PDF files supported")
-    
-    # Save temp file
-    temp_path = Path("/tmp") / file.filename
-    with open(temp_path, "wb") as f:
-        content = await file.read()
-        f.write(content)
-    
-    # Ingest
+
+    suffix = Path(file.filename).suffix
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        tmp.write(await file.read())
+        temp_path = Path(tmp.name)
+
     try:
         result = ingest_pdf(str(temp_path))
         return result
@@ -637,6 +697,167 @@ async def ingest_document(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         temp_path.unlink(missing_ok=True)
+
+
+@app.post("/api/user/bootstrap")
+async def api_user_bootstrap():
+    """Anonymous user + session token (send as X-User-Session on subsequent requests)."""
+    boot = user_store.bootstrap_anonymous_user()
+    return {
+        "user_id": boot.user_id,
+        "session_token": boot.session_token,
+        "expires_at": boot.expires_at,
+    }
+
+
+@app.get("/api/projects")
+async def api_list_projects(request: Request):
+    uid = user_store.validate_session(request.headers.get("X-User-Session"))
+    if not uid:
+        raise HTTPException(status_code=401, detail="Invalid or missing X-User-Session")
+    return [
+        {"id": p.id, "name": p.name, "config": p.config, "updated_at": p.updated_at}
+        for p in user_store.list_projects(uid)
+    ]
+
+
+@app.post("/api/projects")
+async def api_create_project(request: Request, body: ProjectCreateRequest):
+    uid = user_store.validate_session(request.headers.get("X-User-Session"))
+    if not uid:
+        raise HTTPException(status_code=401, detail="Invalid or missing X-User-Session")
+    rec = user_store.create_project(uid, body.name, body.config)
+    return {"id": rec.id, "name": rec.name, "config": rec.config, "updated_at": rec.updated_at}
+
+
+@app.get("/api/projects/{project_id}")
+async def api_get_project(request: Request, project_id: str):
+    uid = user_store.validate_session(request.headers.get("X-User-Session"))
+    if not uid:
+        raise HTTPException(status_code=401, detail="Invalid or missing X-User-Session")
+    rec = user_store.get_project(uid, project_id)
+    if not rec:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return {"id": rec.id, "name": rec.name, "config": rec.config, "updated_at": rec.updated_at}
+
+
+@app.put("/api/projects/{project_id}")
+async def api_update_project(request: Request, project_id: str, body: ProjectUpdateRequest):
+    uid = user_store.validate_session(request.headers.get("X-User-Session"))
+    if not uid:
+        raise HTTPException(status_code=401, detail="Invalid or missing X-User-Session")
+    rec = user_store.update_project(uid, project_id, body.name, body.config)
+    if not rec:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return {"id": rec.id, "name": rec.name, "config": rec.config, "updated_at": rec.updated_at}
+
+
+@app.delete("/api/projects/{project_id}")
+async def api_delete_project(request: Request, project_id: str):
+    uid = user_store.validate_session(request.headers.get("X-User-Session"))
+    if not uid:
+        raise HTTPException(status_code=401, detail="Invalid or missing X-User-Session")
+    if not user_store.delete_project(uid, project_id):
+        raise HTTPException(status_code=404, detail="Project not found")
+    return {"ok": True}
+
+
+@app.post("/api/share")
+async def api_create_share(body: ShareCreateRequest):
+    if body.session_id:
+        session = session_history.load_session(body.session_id)
+        if not session:
+            raise HTTPException(status_code=404, detail="Session not found")
+        payload = session.to_dict()
+    elif body.payload:
+        payload = body.payload
+    else:
+        raise HTTPException(status_code=400, detail="Provide session_id or payload")
+    token = user_store.create_share_link(payload)
+    return {"token": token, "share_url": f"/shared/{token}"}
+
+
+@app.get("/api/shared/{token}")
+async def api_get_shared(token: str):
+    data = user_store.get_shared_payload(token)
+    if not data:
+        raise HTTPException(status_code=404, detail="Link expired or not found")
+    return data
+
+
+@app.get("/shared/{token}", response_class=HTMLResponse)
+async def shared_viewer_page(token: str):
+    """Public read-only viewer for a shared deliberation."""
+    return HTMLResponse(
+        f"""<!DOCTYPE html>
+<html lang="pl"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width"/>
+<title>Udostępniona narada</title>
+<style>
+body {{ font-family: system-ui, sans-serif; background:#111; color:#eee; padding:2rem; max-width:900px; margin:0 auto; }}
+pre {{ white-space:pre-wrap; background:#1a1a24; padding:1rem; border-radius:8px; }}
+h1 {{ font-size:1.25rem; }}
+a {{ color:#8b9cff; }}
+</style></head><body>
+<h1>Udostępniona narada</h1>
+<p id="err" class="hidden"></p>
+<div id="out">Ładowanie…</div>
+<script>
+fetch('/api/shared/{token}').then(r => {{
+  if (!r.ok) throw new Error('Nie znaleziono lub wygasło');
+  return r.json();
+}}).then(d => {{
+  const el = document.getElementById('out');
+  const meta = d.metadata || {{}};
+  const q = meta.query || d.query || '';
+  let html = '<p><strong>Pytanie:</strong> ' + escapeHtml(q) + '</p>';
+  if (d.responses) {{
+    html += '<h2>Odpowiedzi</h2>';
+    for (const r of d.responses) {{
+      html += '<h3>' + escapeHtml(r.agent_name||'') + '</h3><pre>' + escapeHtml(r.content||'') + '</pre>';
+    }}
+  }}
+  if (d.synthesis) {{
+    html += '<h2>Synteza</h2><pre>' + escapeHtml(typeof d.synthesis === 'string' ? d.synthesis : (d.synthesis.content||'')) + '</pre>';
+  }}
+  el.innerHTML = html;
+}}).catch(e => {{
+  document.getElementById('out').textContent = '';
+  const er = document.getElementById('err');
+  er.classList.remove('hidden');
+  er.textContent = e.message || String(e);
+}});
+function escapeHtml(s) {{
+  const t = document.createElement('div');
+  t.textContent = s;
+  return t.innerHTML;
+}}
+</script>
+<p style="margin-top:2rem;font-size:0.85rem"><a href="/">← AI Council</a></p>
+</body></html>"""
+    )
+
+
+@app.post("/api/knowledge/ingest/url")
+async def api_ingest_url(body: IngestUrlRequest):
+    return ingest_url(body.url, category=body.category, tags=body.tags)
+
+
+@app.post("/api/knowledge/ingest/notion")
+async def api_ingest_notion(body: IngestNotionRequest):
+    return ingest_notion_page(body.page_id, category=body.category, tags=body.tags)
+
+
+@app.post("/api/knowledge/ingest/folder")
+async def api_ingest_folder(body: IngestFolderRequest):
+    p = Path(body.path)
+    if not p.is_dir():
+        raise HTTPException(status_code=400, detail="Invalid directory path")
+    return ingest_mixed_directory(str(p.resolve()))
+
+
+@app.post("/api/knowledge/refresh")
+async def api_refresh_doc(body: RefreshDocRequest):
+    return refresh_document_embeddings(body.doc_id)
 
 
 @app.get("/api/sessions")
@@ -675,7 +896,12 @@ async def export_session(session_id: str, format: str = "markdown"):
     try:
         dt = datetime.fromisoformat(session.metadata.timestamp)
         date_str = dt.strftime("%Y%m%d_%H%M")
-    except:
+    except (ValueError, TypeError, OSError) as e:
+        logger.debug(
+            "Session export: could not parse timestamp %r: %s",
+            getattr(session.metadata, "timestamp", None),
+            e,
+        )
         date_str = "export"
     
     filename_base = f"narada_{date_str}"
@@ -1182,8 +1408,8 @@ async def test_custom_agent(request: AgentTestRequest):
         try:
             chunks = query_knowledge(request.query, top_k=3)
             context = [c["text"] for c in chunks]
-        except:
-            pass
+        except Exception as e:
+            logger.warning(f"Knowledge base context for agent test skipped: {e}")
     
     # Run analysis
     response = await agent.analyze(request.query, context)

@@ -21,6 +21,12 @@ window.fetch = function(url, options = {}) {
         if (!options.headers['X-API-Keys']) {
             options.headers['X-API-Keys'] = apiKeyManager.encodeKeys();
         }
+        try {
+            const t = localStorage.getItem('ai_council_user_session_token');
+            if (t && !options.headers['X-User-Session']) {
+                options.headers['X-User-Session'] = t;
+            }
+        } catch { /* ignore */ }
 
         // Use fetchWithRetry for better error handling
         return fetchWithRetry(url, options).catch(error => {

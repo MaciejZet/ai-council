@@ -18,6 +18,18 @@ load_dotenv()
 _retriever_log = setup_logger("ai_council.knowledge")
 
 
+def _keyword_overlap_score(query: str, text: str) -> float:
+    """Simple token overlap ratio for hybrid reranking."""
+    if not query.strip() or not text.strip():
+        return 0.0
+    q_tokens = set(t.lower() for t in query.replace("/", " ").split() if len(t) > 2)
+    if not q_tokens:
+        return 0.0
+    t_lower = text.lower()
+    hits = sum(1 for t in q_tokens if t in t_lower)
+    return hits / max(len(q_tokens), 1)
+
+
 def _validate_metadata_filters(
     category: Optional[str],
     source_type: Optional[str],
@@ -27,7 +39,7 @@ def _validate_metadata_filters(
         raise KnowledgeFilterError(
             f"Invalid category {category!r}. Allowed: {sorted(allowed_categories)}"
         )
-    allowed_source = {"book", "summary", "article", "ogólne"}
+    allowed_source = {"book", "summary", "article", "ogólne", "web", "notion", "file"}
     if source_type is not None and source_type not in allowed_source:
         raise KnowledgeFilterError(
             f"Invalid source_type {source_type!r}. Allowed: {sorted(allowed_source)}"
@@ -81,6 +93,7 @@ def query_knowledge(
     category: Optional[str] = None,
     source_type: Optional[str] = None,
     min_score: float = 0.3,
+    hybrid: bool = False,
 ) -> List[Dict[str, Any]]:
     """
     Odpytuje bazę wiedzy i zwraca relevantne fragmenty
@@ -91,6 +104,7 @@ def query_knowledge(
         category: Filtr kategorii (marketing, biznes, etc.)
         source_type: Filtr typu źródła (book, summary, article)
         min_score: Minimalny score podobieństwa
+        hybrid: Pobierz więcej wyników wektorowych i przesortuj z użyciem nakładania słów kluczowych
 
     Returns:
         Lista relevantnych fragmentów z metadanymi (pusta przy błędzie odzyskiwalnym).
@@ -124,10 +138,11 @@ def query_knowledge(
         _retriever_log.warning("Pinecone unavailable: %s", e)
         return []
 
+    fetch_k = top_k * 3 if hybrid else top_k
     try:
         results = index.query(
             vector=query_embedding,
-            top_k=top_k,
+            top_k=max(fetch_k, top_k),
             include_metadata=True,
             filter=filter_dict if filter_dict else None,
         )
@@ -139,18 +154,30 @@ def query_knowledge(
     for match in results.matches:
         if match.score is not None and match.score >= min_score:
             meta = match.metadata or {}
+            vec_score = float(match.score)
+            text = meta.get("text", "")
+            kw = _keyword_overlap_score(query, text) if hybrid else 0.0
+            combined = 0.65 * vec_score + 0.35 * kw if hybrid else vec_score
             relevant_chunks.append(
                 {
-                    "text": meta.get("text", ""),
+                    "text": text,
                     "title": meta.get("title", meta.get("filename", "Unknown")),
                     "category": meta.get("category", "ogólne"),
                     "language": meta.get("language", "pl"),
                     "source_type": meta.get("source_type", "book"),
-                    "score": match.score,
+                    "score": combined,
+                    "vector_score": vec_score,
+                    "keyword_score": kw if hybrid else None,
                     "chunk_index": meta.get("chunk_index", 0),
                     "total_chunks": meta.get("total_chunks", 0),
+                    "tags": meta.get("tags", ""),
+                    "doc_id": meta.get("doc_id", ""),
                 }
             )
+
+    if hybrid and relevant_chunks:
+        relevant_chunks.sort(key=lambda x: float(x.get("score", 0)), reverse=True)
+        relevant_chunks = relevant_chunks[:top_k]
 
     return relevant_chunks
 
@@ -242,6 +269,22 @@ def search_by_category(category: str, query: str = "", top_k: int = 10) -> List[
         Lista wyników
     """
     return query_knowledge(query or "wiedza", top_k=top_k, category=category)
+
+
+def delete_vectors_by_doc_id(doc_id: str) -> bool:
+    """Usuwa wszystkie wektory z metadanymi doc_id (odświeżanie embeddingów)."""
+    if not doc_id or not doc_id.strip():
+        return False
+    try:
+        index = get_pinecone_index()
+    except KnowledgeConfigError:
+        return False
+    try:
+        index.delete(filter={"doc_id": {"$eq": doc_id.strip()}})
+        return True
+    except Exception as exc:
+        _retriever_log.error("Pinecone delete by doc_id failed: %s", exc)
+        return False
 
 
 def get_all_categories() -> List[str]:

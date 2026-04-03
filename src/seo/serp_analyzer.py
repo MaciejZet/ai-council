@@ -5,12 +5,15 @@ Analiza konkurencji w wynikach wyszukiwania Google
 Wykorzystuje Tavily lub DuckDuckGo do uzyskania SERP
 """
 
+import logging
 import os
-from typing import List, Optional, Dict, Any
+from typing import Any, Dict, List, Optional
 from dataclasses import dataclass, field
 from dotenv import load_dotenv
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -216,7 +219,8 @@ class SERPAnalyzer:
         try:
             parsed = urlparse(url)
             return parsed.netloc
-        except:
+        except Exception as e:
+            logger.debug("urlparse failed for %r: %s", url, e)
             return ""
     
     def _extract_common_themes(self, competitors: List[CompetitorArticle]) -> List[str]:

@@ -12,8 +12,14 @@ from datetime import datetime
 
 from src.agents.base import BaseAgent, AgentResponse, agent_registry
 from src.agents.core_agents import Synthesizer, create_core_agents, CORE_AGENT_NAMES
+from src.council.quality import (
+    critic_review,
+    llm_agent_weights,
+    preset_instructions,
+    synthesize_with_critic_and_weights,
+)
 from src.knowledge.retriever import query_knowledge, format_context_for_agent, format_sources_for_display
-from src.llm_providers import calculate_cost
+from src.llm_providers import LLMProvider, calculate_cost
 from src.utils.logger import setup_logger
 
 _orchestrator_logger = setup_logger("ai_council.council")
@@ -56,6 +62,9 @@ class CouncilDeliberation:
     providers_used: List[str]
     # Token usage
     usage: UsageStats = field(default_factory=UsageStats)
+    behavior_preset: str = "default"
+    critic_notes: Optional[str] = None
+    agent_weights: Optional[List[Dict[str, Any]]] = None
 
 
 class Council:
@@ -81,13 +90,15 @@ class Council:
         
         return non_synthesizers
     
-    def _get_context(self, query: str) -> tuple[List[str], List[Dict[str, Any]]]:
+    def _get_context(
+        self, query: str, *, hybrid: bool = False
+    ) -> tuple[List[str], List[Dict[str, Any]]]:
         """Pobiera kontekst z bazy wiedzy"""
         if not self.use_knowledge_base:
             return [], []
         
         try:
-            chunks = query_knowledge(query, top_k=self.knowledge_top_k)
+            chunks = query_knowledge(query, top_k=self.knowledge_top_k, hybrid=hybrid)
             texts = [chunk["text"] for chunk in chunks]
             sources = format_sources_for_display(chunks)
             return texts, sources
@@ -99,7 +110,12 @@ class Council:
         self,
         query: str,
         agents: Optional[List[BaseAgent]] = None,
-        include_synthesis: bool = True
+        include_synthesis: bool = True,
+        llm: Optional[LLMProvider] = None,
+        behavior_preset: str = "default",
+        enable_critic: bool = False,
+        enable_weighted_voting: bool = False,
+        hybrid_search: bool = False,
     ) -> CouncilDeliberation:
         """
         Przeprowadza naradę rady z pełnym śledzeniem tokenów
@@ -124,11 +140,46 @@ class Council:
             create_core_agents()
             agents = self._get_agents()
         
+        preset = (behavior_preset or "default").strip().lower()
+        effective_query = query + preset_instructions(preset)
+
         # Pobierz kontekst z bazy wiedzy
-        context, sources = self._get_context(query)
-        
+        context, sources = self._get_context(query, hybrid=hybrid_search)
+
+        if preset == "kb_only" and self.use_knowledge_base and not context:
+            synth = None
+            if include_synthesis and self._synthesizer:
+                synth = AgentResponse(
+                    agent_name=f"{self._synthesizer.emoji} {self._synthesizer.name}",
+                    role=self._synthesizer.role,
+                    perspective="",
+                    content=(
+                        "W bazie wiedzy nie znaleziono fragmentów pasujących do tego pytania. "
+                        "Dodaj dokumenty (import) lub wyłącz preset „tylko fakty z KB”."
+                    ),
+                    provider_used=self._synthesizer.provider.get_name(),
+                    prompt_tokens=0,
+                    completion_tokens=0,
+                    total_tokens=0,
+                    model=getattr(self._synthesizer.provider, "model", "") or "",
+                )
+            return CouncilDeliberation(
+                query=query,
+                timestamp=datetime.now().isoformat(),
+                context_used=context,
+                sources=sources,
+                agent_responses=[],
+                synthesis=synth,
+                total_agents=1 if synth else 0,
+                providers_used=[synth.provider_used] if synth else [],
+                usage=usage,
+                behavior_preset=preset,
+                critic_notes=None,
+                agent_weights=None,
+            )
+
         # Wywołaj agentów równolegle
-        tasks = [agent.analyze(query, context) for agent in agents]
+        tasks = [agent.analyze(effective_query, context) for agent in agents]
         responses: List[AgentResponse] = await asyncio.gather(*tasks)
         
         # Zbierz tokeny z odpowiedzi agentów
@@ -141,14 +192,46 @@ class Council:
         
         # Synteza końcowa
         synthesis = None
+        critic_notes: Optional[str] = None
+        weights_payload: Optional[List[Dict[str, Any]]] = None
+        model_for_extra = responses[0].model if responses else "gpt-4o"
+
         if include_synthesis and self._synthesizer:
-            synthesis = await self._synthesizer.synthesize(query, context, responses)
-            # Dodaj tokeny syntezy
-            usage.add(
-                synthesis.prompt_tokens,
-                synthesis.completion_tokens,
-                synthesis.model
-            )
+            synth_llm = llm or self._synthesizer.provider
+            use_quality = enable_critic or enable_weighted_voting
+            if use_quality:
+                if enable_critic:
+                    critic_notes, pt, ct = await critic_review(synth_llm, query, context, responses)
+                    usage.add(pt, ct, model_for_extra)
+                weights_list: Optional[List[float]] = None
+                if enable_weighted_voting:
+                    weights_list, pt2, ct2 = await llm_agent_weights(synth_llm, query, responses)
+                    usage.add(pt2, ct2, model_for_extra)
+                    weights_payload = [
+                        {"agent": responses[i].agent_name, "weight": float(weights_list[i])}
+                        for i in range(len(responses))
+                    ]
+                synthesis = await synthesize_with_critic_and_weights(
+                    self._synthesizer,
+                    effective_query,
+                    context,
+                    responses,
+                    critic_text=critic_notes,
+                    weights=weights_list,
+                    preset=preset,
+                )
+                usage.add(
+                    synthesis.prompt_tokens,
+                    synthesis.completion_tokens,
+                    synthesis.model
+                )
+            else:
+                synthesis = await self._synthesizer.synthesize(effective_query, context, responses)
+                usage.add(
+                    synthesis.prompt_tokens,
+                    synthesis.completion_tokens,
+                    synthesis.model
+                )
         
         # Zbierz użytych providerów
         providers = list(set(r.provider_used for r in responses))
@@ -164,7 +247,10 @@ class Council:
             synthesis=synthesis,
             total_agents=len(responses) + (1 if synthesis else 0),
             providers_used=list(set(providers)),
-            usage=usage
+            usage=usage,
+            behavior_preset=preset,
+            critic_notes=critic_notes,
+            agent_weights=weights_payload,
         )
     
     async def quick_deliberate(self, query: str) -> str:

@@ -35,6 +35,103 @@ const TOKEN_COSTS = {
     'grok-2': 0.002, 'gemini-1.5-pro': 0.00125
 };
 
+const SERVER_SESSION_ID_KEY = 'ai_council_server_session_id';
+const USER_SESSION_KEY = 'ai_council_user_session_token';
+
+function getUserSessionToken() {
+    try {
+        return localStorage.getItem(USER_SESSION_KEY) || null;
+    } catch {
+        return null;
+    }
+}
+
+function setUserSessionToken(token) {
+    try {
+        if (token) localStorage.setItem(USER_SESSION_KEY, token);
+        else localStorage.removeItem(USER_SESSION_KEY);
+    } catch { /* ignore */ }
+}
+
+async function ensureUserSession() {
+    if (getUserSessionToken()) return;
+    try {
+        const r = await fetch('/api/user/bootstrap', { method: 'POST' });
+        if (!r.ok) return;
+        const d = await r.json();
+        if (d.session_token) setUserSessionToken(d.session_token);
+    } catch {
+        /* ignore */
+    }
+}
+
+function getStoredServerSessionId() {
+    try {
+        return localStorage.getItem(SERVER_SESSION_ID_KEY) || null;
+    } catch {
+        return null;
+    }
+}
+
+function setStoredServerSessionId(id) {
+    try {
+        if (id) localStorage.setItem(SERVER_SESSION_ID_KEY, id);
+        else localStorage.removeItem(SERVER_SESSION_ID_KEY);
+    } catch { /* ignore */ }
+}
+
+function needsQualityDeliberationPath() {
+    const p = document.getElementById('behavior-preset-select');
+    const preset = p ? p.value : 'default';
+    const critic = document.getElementById('critic-toggle')?.checked ?? false;
+    const weighted = document.getElementById('weighted-toggle')?.checked ?? false;
+    const hybrid = document.getElementById('hybrid-kb-toggle')?.checked ?? false;
+    return preset !== 'default' || critic || weighted || hybrid;
+}
+
+function buildDeliberateRequestExtras() {
+    const fullEl = document.getElementById('routing-full-toggle');
+    const persistEl = document.getElementById('persist-session-toggle');
+    const routing_mode = fullEl && fullEl.checked ? 'full' : 'auto';
+    const persist_session = persistEl ? persistEl.checked : false;
+    const sid = getStoredServerSessionId();
+    const presetEl = document.getElementById('behavior-preset-select');
+    const behavior_preset = presetEl ? presetEl.value : 'default';
+    const enable_critic = document.getElementById('critic-toggle')?.checked ?? false;
+    const enable_weighted_voting = document.getElementById('weighted-toggle')?.checked ?? false;
+    const hybrid_search = document.getElementById('hybrid-kb-toggle')?.checked ?? false;
+    return {
+        routing_mode,
+        persist_session,
+        behavior_preset,
+        enable_critic,
+        enable_weighted_voting,
+        hybrid_search,
+        ...(sid ? { session_id: sid } : {}),
+    };
+}
+
+function showRoutingIntentBadge(intent, reason) {
+    const el = document.getElementById('routing-intent-badge');
+    if (!el) return;
+    if (!intent) {
+        el.classList.add('hidden');
+        el.textContent = '';
+        return;
+    }
+    const shortReason = reason ? `${reason.slice(0, 72)}${reason.length > 72 ? '…' : ''}` : '';
+    el.textContent = shortReason ? `Routing: ${intent} — ${shortReason}` : `Routing: ${intent}`;
+    el.classList.remove('hidden');
+}
+
+function hideRoutingIntentBadge() {
+    const el = document.getElementById('routing-intent-badge');
+    if (el) {
+        el.classList.add('hidden');
+        el.textContent = '';
+    }
+}
+
 const AGENT_COLORS = {
     // Core agents
     'Strateg': { bg: 'bg-blue-500/10', text: 'text-blue-500', icon: 'chess', color: '#3b82f6' },
@@ -235,6 +332,7 @@ let modeSelectInstance, providerSelectInstance, modelSelectInstance;
 
 // ========== INITIALIZATION ==========
 document.addEventListener('DOMContentLoaded', () => {
+    ensureUserSession();
     loadSettings();
     loadStats();
     loadAgents();
@@ -923,6 +1021,8 @@ async function handleSubmit(e) {
     const query = queryInput.value.trim();
     if (!query) return;
 
+    hideRoutingIntentBadge();
+
     // Cancel any existing stream
     if (streamingEventSource) {
         streamingEventSource.close();
@@ -941,6 +1041,32 @@ async function handleSubmit(e) {
         mentorsStream(query);
     } else if (currentMode === 'debate') {
         debateStream(query);
+    } else if (currentMode === 'council' && needsQualityDeliberationPath()) {
+        showLoading();
+        try {
+            const payload = await deliberate(query);
+            lastResult = {
+                query: payload.query,
+                timestamp: payload.timestamp,
+                agent_responses: payload.agent_responses || [],
+                synthesis: payload.synthesis || null,
+                sources: payload.sources || [],
+            };
+            if (payload.session_id) setStoredServerSessionId(payload.session_id);
+            if (payload.routing_intent) showRoutingIntentBadge(payload.routing_intent, '');
+            renderResults(lastResult);
+            history.push({
+                query: payload.query,
+                synthesis: payload.synthesis?.content || '',
+                timestamp: payload.timestamp,
+            });
+            showExportButton();
+            showToast('Narada zakończona', 'success');
+        } catch (err) {
+            console.error(err);
+            showToast(err.message || 'Błąd narady', 'error');
+            showWelcome();
+        }
     } else {
         deliberateStream(query);
     }
@@ -1255,7 +1381,8 @@ function deliberateStream(query) {
         query: query,
         provider: currentProvider,
         model: currentModel,
-        use_knowledge_base: kbToggle?.checked ?? true
+        use_knowledge_base: kbToggle?.checked ?? true,
+        ...buildDeliberateRequestExtras(),
     };
 
     streamWithFetch(
@@ -1264,6 +1391,10 @@ function deliberateStream(query) {
         // onEvent
         (data) => {
             switch (data.event) {
+                case 'routing':
+                    showRoutingIntentBadge(data.intent, data.reason || '');
+                    break;
+
                 case 'sources':
                     handleSources(data.sources);
                     break;
@@ -1547,15 +1678,21 @@ async function deliberate(query) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-            query, provider: currentProvider, model: currentModel,
+            query,
+            provider: currentProvider,
+            model: currentModel,
             use_knowledge_base: kbToggle?.checked ?? true,
             chat_mode: useChatMode,
             attachment_text: attachmentText,
-            history: useChatMode ? history.slice(-3) : []
+            history: useChatMode ? history.slice(-3) : [],
+            ...buildDeliberateRequestExtras(),
         })
     });
     if (!response.ok) throw new Error((await response.json()).detail || 'API Error');
-    return await response.json();
+    const payload = await response.json();
+    if (payload.session_id) setStoredServerSessionId(payload.session_id);
+    if (payload.routing_intent) showRoutingIntentBadge(payload.routing_intent, '');
+    return payload;
 }
 
 // ========== DEBATE MODE ==========
@@ -1608,6 +1745,14 @@ function debateStream(query) {
 
             case 'round_done':
                 handleRoundDone(data.round);
+                break;
+
+            case 'debate_analysis':
+                handleDebateAnalysis(
+                    data.consensus_points || [],
+                    data.disagreement_points || [],
+                    data.disagreement_map || {}
+                );
                 break;
 
             case 'consensus':
@@ -1747,14 +1892,76 @@ function handleRoundDone(roundNum) {
     }
 }
 
+function handleDebateAnalysis(consensusPoints, disagreementPoints, disagreementMap) {
+    const panel = document.getElementById('consensus-panel');
+    if (!panel) return;
+
+    let mapSection = '';
+    if (disagreementMap && typeof disagreementMap === 'object' && Object.keys(disagreementMap).length > 0) {
+        const rows = Object.entries(disagreementMap).map(([topic, views]) => {
+            let inner = '';
+            if (views && typeof views === 'object') {
+                inner = Object.entries(views).map(([agent, view]) =>
+                    `<li class="text-xs text-text-secondary"><strong class="text-white/80">${escapeHtml(agent)}</strong>: ${escapeHtml(String(view))}</li>`
+                ).join('');
+            }
+            return `
+                <div class="border border-white/10 rounded-lg p-3 bg-black/20">
+                    <p class="text-sm font-medium text-primary mb-2">${escapeHtml(topic)}</p>
+                    <ul class="space-y-1 list-none pl-0">${inner}</ul>
+                </div>`;
+        }).join('');
+        mapSection = `
+            <div class="mt-4">
+                <h4 class="font-bold text-sm mb-2 flex items-center gap-2">
+                    <span class="material-symbols-outlined text-[18px]">hub</span>
+                    Mapa niezgodności
+                </h4>
+                <div class="space-y-3">${rows}</div>
+            </div>`;
+    }
+
+    panel.classList.remove('hidden');
+    panel.innerHTML = `
+        <div class="debate-llm-analysis bg-gradient-to-br from-primary/15 to-surface-darker rounded-xl border border-primary/30 p-6 mb-4">
+            <h3 class="font-bold text-lg mb-3 flex items-center gap-2">
+                <span class="material-symbols-outlined text-primary">analytics</span>
+                Wstępna analiza strukturalna
+            </h3>
+            <div class="grid md:grid-cols-2 gap-4">
+                <div class="bg-green-500/10 border border-green-500/20 rounded-lg p-4">
+                    <h4 class="font-bold text-green-400 text-sm mb-2">Zbieżności</h4>
+                    <ul class="space-y-1 text-sm">
+                        ${consensusPoints.length
+        ? consensusPoints.map(p => `<li>✓ ${escapeHtml(p)}</li>`).join('')
+        : '<li class="text-text-secondary italic">—</li>'}
+                    </ul>
+                </div>
+                <div class="bg-orange-500/10 border border-orange-500/20 rounded-lg p-4">
+                    <h4 class="font-bold text-orange-400 text-sm mb-2">Rozbieżności</h4>
+                    <ul class="space-y-1 text-sm">
+                        ${disagreementPoints.length
+        ? disagreementPoints.map(p => `<li>⚠ ${escapeHtml(p)}</li>`).join('')
+        : '<li class="text-text-secondary italic">—</li>'}
+                    </ul>
+                </div>
+            </div>
+            ${mapSection}
+        </div>
+    `;
+}
+
 function handleConsensusResult(consensusPoints, disagreementPoints) {
     debateConsensus = { points: consensusPoints, disagreements: disagreementPoints };
 
     const panel = document.getElementById('consensus-panel');
     if (!panel) return;
 
+    const preliminary = panel.querySelector('.debate-llm-analysis');
+    const prelimHtml = preliminary ? preliminary.outerHTML : '';
+
     panel.classList.remove('hidden');
-    panel.innerHTML = `
+    panel.innerHTML = prelimHtml + `
         <div class="consensus-summary bg-gradient-to-br from-surface-dark to-surface-darker rounded-xl border border-white/10 p-6">
             <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
                 <span>🎯</span> Podsumowanie Debaty
@@ -2210,6 +2417,7 @@ function resetSession() {
     history = [];
     lastResult = null;
     currentSessionId = null;
+    setStoredServerSessionId(null);
     totalTokensUsed = 0;
     estimatedCost = 0;
     updateStatDisplay();
@@ -2283,6 +2491,28 @@ function storeSessionForExport(query, responses, synthesis, mode) {
         responses: responses || [],
         synthesis: synthesis || null
     };
+}
+
+async function createShareLink() {
+    const sid = getStoredServerSessionId();
+    if (!sid) {
+        showToast('Włącz zapis sesji na serwerze (💾 Serwer), wykonaj naradę, potem utwórz link.', 'error');
+        return;
+    }
+    try {
+        const r = await fetch('/api/share', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ session_id: sid }),
+        });
+        if (!r.ok) throw new Error('share failed');
+        const d = await r.json();
+        const url = `${window.location.origin}${d.share_url}`;
+        await navigator.clipboard.writeText(url);
+        showToast('Skopiowano link udostępnienia do schowka', 'success');
+    } catch {
+        showToast('Nie udało się utworzyć linku', 'error');
+    }
 }
 
 function exportSessionMarkdown() {
@@ -2438,6 +2668,13 @@ function showExportMenu(event) {
     menu.style.top = (event.clientY + 10) + 'px';
     menu.style.left = event.clientX + 'px';
 
+    const sid = getStoredServerSessionId();
+    const serverPdf = sid
+        ? `<button onclick="window.open('/api/sessions/${sid}/export?format=pdf','_blank'); closeExportMenu();" class="w-full text-left px-3 py-2 rounded hover:bg-white/10 flex items-center gap-2 text-sm">
+            <span class="material-symbols-outlined text-[18px]">picture_as_pdf</span>
+            PDF (serwer)
+        </button>`
+        : '';
     menu.innerHTML = `
         <button onclick="exportSessionMarkdown(); closeExportMenu();" class="w-full text-left px-3 py-2 rounded hover:bg-white/10 flex items-center gap-2 text-sm">
             <span class="material-symbols-outlined text-[18px]">description</span>
@@ -2446,6 +2683,11 @@ function showExportMenu(event) {
         <button onclick="exportSessionHtml(); closeExportMenu();" class="w-full text-left px-3 py-2 rounded hover:bg-white/10 flex items-center gap-2 text-sm">
             <span class="material-symbols-outlined text-[18px]">code</span>
             HTML
+        </button>
+        ${serverPdf}
+        <button onclick="createShareLink(); closeExportMenu();" class="w-full text-left px-3 py-2 rounded hover:bg-white/10 flex items-center gap-2 text-sm">
+            <span class="material-symbols-outlined text-[18px]">link</span>
+            Link do udostępnienia
         </button>
         <button onclick="copySessionToClipboard(); closeExportMenu();" class="w-full text-left px-3 py-2 rounded hover:bg-white/10 flex items-center gap-2 text-sm">
             <span class="material-symbols-outlined text-[18px]">content_copy</span>
@@ -3155,6 +3397,22 @@ function copySEOArticle(format) {
         showToast('Błąd kopiowania', 'error');
         console.error(err);
     });
+}
+
+function downloadSEOFullPage() {
+    if (!seoLastResult || !seoLastResult.full_page_html) {
+        showToast('Brak pełnej strony HTML (wygeneruj artykuł ponownie)', 'error');
+        return;
+    }
+    const title = (seoLastResult.title || 'article').replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '_') || 'article';
+    const blob = new Blob([seoLastResult.full_page_html], { type: 'text/html;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${title}.html`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast('Pobrano pełną stronę HTML', 'success');
 }
 
 async function openBrandInfoModal() {
