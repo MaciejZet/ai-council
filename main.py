@@ -11,10 +11,11 @@ from pathlib import Path
 from typing import Optional, List, Dict, Any
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, FileResponse, StreamingResponse, Response
-from pydantic import BaseModel
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, ValidationError
 
 # Import existing modules
 from src.agents.base import agent_registry
@@ -25,12 +26,15 @@ from src.agents import agent_storage
 from src.agents.prompt_templates import get_all_templates, get_template, get_templates_by_category
 from src.council.orchestrator import Council, CouncilDeliberation, format_deliberation_markdown
 from src.council.debate import DebateOrchestrator
-from src.knowledge.ingest import ingest_pdf, get_ingestion_stats
-from src.knowledge.retriever import get_category_emoji, query_knowledge, format_sources_for_display
-from src.council.debate import DebateOrchestrator
+from src.council.fast_mode import fast_response
 from src.knowledge.ingest import ingest_pdf, get_ingestion_stats
 from src.knowledge.retriever import get_category_emoji, query_knowledge, format_sources_for_display
 from src.llm_providers import OpenAIProvider, GrokProvider, GeminiProvider, DeepSeekProvider, OpenRouterProvider, AVAILABLE_PROVIDERS, get_provider
+from src.custom_api_provider import CustomAPIProvider
+from src.utils.api_keys import APIKeyManager
+from src.utils.validation import QueryRequest as ValidatedQueryRequest, FileUploadValidator
+from src.utils.rate_limit import get_rate_limiter
+from src.utils.logger import setup_logger
 from src.plugins import get_plugin_manager, PluginResult
 from src.plugins.web_search import TavilySearchPlugin, DuckDuckGoSearchPlugin
 from src.plugins.url_analyzer import URLAnalyzerPlugin
@@ -147,6 +151,95 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="AI Council API", lifespan=lifespan)
 
+# Setup logger
+logger = setup_logger("ai_council.main")
+
+# CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # In production, specify exact origins
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+# ========== MIDDLEWARE ==========
+
+@app.middleware("http")
+async def api_keys_middleware(request: Request, call_next):
+    """Extract API keys from header and attach to request state"""
+    api_keys = request.headers.get("X-API-Keys")
+    request.state.api_keys = api_keys
+    response = await call_next(request)
+    return response
+
+
+@app.middleware("http")
+async def validation_middleware(request: Request, call_next):
+    """Validate request size"""
+    # Check request size (10MB limit)
+    content_length = request.headers.get("content-length")
+    if content_length and int(content_length) > 10 * 1024 * 1024:
+        logger.warning(f"Request too large: {content_length} bytes")
+        raise HTTPException(status_code=413, detail="Request too large (max 10MB)")
+
+    response = await call_next(request)
+    return response
+
+
+@app.middleware("http")
+async def rate_limit_middleware(request: Request, call_next):
+    """Apply rate limiting to API endpoints"""
+    if request.url.path.startswith("/api/"):
+        try:
+            limiter = get_rate_limiter()
+            await limiter.check_rate_limit(request)
+        except HTTPException as e:
+            logger.warning(f"Rate limit exceeded for {request.client.host}")
+            raise e
+
+    response = await call_next(request)
+    return response
+
+
+@app.middleware("http")
+async def logging_middleware(request: Request, call_next):
+    """Log all requests"""
+    import time
+    start_time = time.time()
+
+    logger.info(f"Request: {request.method} {request.url.path}")
+
+    response = await call_next(request)
+
+    duration = time.time() - start_time
+    logger.info(f"Response: {response.status_code} ({duration:.2f}s)")
+
+    return response
+
+
+# ========== HELPER FUNCTIONS ==========
+def create_llm_provider(provider: str, model: str):
+    """Create LLM provider instance based on provider name and model"""
+    from src.llm_providers import DeepSeekProvider, PerplexityProvider
+
+    if provider == "openai":
+        return OpenAIProvider(model=model)
+    elif provider == "grok":
+        return GrokProvider(model=model)
+    elif provider == "deepseek":
+        return DeepSeekProvider(model=model)
+    elif provider == "openrouter":
+        return OpenRouterProvider(model=model)
+    elif provider == "perplexity":
+        return PerplexityProvider(model=model)
+    elif provider == "custom":
+        return CustomAPIProvider(model=model)
+    else:
+        return GeminiProvider(model=model)
+
+
 # Static files
 static_path = Path(__file__).parent / "static"
 static_path.mkdir(exist_ok=True)
@@ -154,6 +247,24 @@ app.mount("/static", StaticFiles(directory=str(static_path)), name="static")
 
 
 # ========== ROUTES ==========
+
+# Health and Metrics endpoints
+@app.get("/health")
+async def health_check():
+    """System health check"""
+    from src.utils.health import get_health_checker
+    checker = get_health_checker()
+    return await checker.check_health()
+
+
+@app.get("/metrics")
+async def get_metrics():
+    """Get system metrics"""
+    from src.utils.health import get_health_checker
+    checker = get_health_checker()
+    return checker.get_metrics()
+
+
 @app.get("/", response_class=HTMLResponse)
 async def root():
     """Serve main UI"""
@@ -226,50 +337,65 @@ async def get_providers():
             "deepseek": ["deepseek-chat", "deepseek-reasoner"],
             "perplexity": ["sonar", "sonar-pro", "sonar-reasoning"],
             "openrouter": [
-                "google/gemini-3-pro-preview:free", 
+                "google/gemini-3-pro-preview:free",
                 "google/gemini-2.0-flash-exp:free",
-                "anthropic/claude-3.5-sonnet", 
+                "anthropic/claude-3.5-sonnet",
                 "anthropic/claude-3-opus",
-                "meta-llama/llama-3.1-70b-instruct", 
+                "meta-llama/llama-3.1-70b-instruct",
                 "meta-llama/llama-3.1-405b-instruct",
                 "mistralai/mistral-large-2407",
                 "microsoft/wizardlm-2-8x22b",
                 "qwen/qwen-2.5-72b-instruct"
-            ]
+            ],
+            "custom": ["local-model"]
         }
     }
 
 
 @app.post("/api/deliberate", response_model=DeliberationResult)
-async def deliberate(request: DeliberateRequest):
-    """Run council deliberation"""
-    
+async def deliberate(request: Request):
+    """Run council deliberation with API key support"""
+
+    # Parse and validate request
+    try:
+        data = await request.json()
+        validated = ValidatedQueryRequest(**data)
+    except ValidationError as e:
+        logger.error(f"Validation error: {e}")
+        raise HTTPException(status_code=422, detail=str(e))
+    except Exception as e:
+        logger.error(f"Request parsing error: {e}")
+        raise HTTPException(status_code=400, detail="Invalid request format")
+
+    # Get API keys from request state
+    api_keys = request.state.api_keys
+
     # Build full query with attachment
-    full_query = request.query
-    if request.attachment_text:
-        full_query = f"{request.query}\n\n---\n📎 ZAŁĄCZNIK:\n{request.attachment_text[:5000]}"
-    
+    full_query = validated.query
+    if validated.attachment_text:
+        full_query = f"{validated.query}\n\n---\n📎 ZAŁĄCZNIK:\n{validated.attachment_text[:5000]}"
+
     # Add history context for chat mode
-    if request.chat_mode and request.history:
+    if validated.chat_mode and validated.history:
         history_context = "\n\n---\n💬 POPRZEDNIA ROZMOWA:\n"
-        for item in request.history[-3:]:
+        for item in validated.history[-3:]:
             history_context += f"Q: {item.get('query', '')[:200]}\n"
             if item.get('synthesis'):
                 history_context += f"A: {item['synthesis'][:300]}...\n\n"
         full_query = history_context + "\n---\n📝 AKTUALNE PYTANIE:\n" + full_query
-    
-    # Create LLM provider
-    if request.provider == "openai":
-        llm = OpenAIProvider(model=request.model)
-    elif request.provider == "grok":
-        llm = GrokProvider(model=request.model)
-    elif request.provider == "deepseek":
-        llm = DeepSeekProvider(model=request.model)
-    elif request.provider == "openrouter":
-        llm = OpenRouterProvider(model=request.model)
-    else:
-        llm = GeminiProvider(model=request.model)
-    
+
+    # Create LLM provider with API keys from localStorage or .env
+    try:
+        llm = APIKeyManager.create_provider_with_keys(
+            provider_name=validated.provider,
+            model=validated.model,
+            encoded_keys=api_keys
+        )
+        logger.info(f"Created provider: {validated.provider}/{validated.model}")
+    except Exception as e:
+        logger.error(f"Failed to create provider: {e}")
+        raise HTTPException(status_code=400, detail=f"Failed to create provider: {str(e)}")
+
     # Create agents with selected provider
     agents = [
         Strategist(llm),
@@ -278,16 +404,21 @@ async def deliberate(request: DeliberateRequest):
         Expert(llm),
     ]
     synthesizer = Synthesizer(llm)
-    
+
     # Register agents
     for agent in agents:
         agent_registry.register(agent)
     agent_registry.register(synthesizer)
-    
+
     # Run deliberation
-    council = Council(use_knowledge_base=request.use_knowledge_base)
-    result = await council.deliberate(full_query)
-    
+    try:
+        council = Council(use_knowledge_base=validated.use_knowledge_base)
+        result = await council.deliberate(full_query)
+        logger.info(f"Deliberation completed: {result.usage.total_tokens} tokens, ${result.usage.total_cost:.4f}")
+    except Exception as e:
+        logger.error(f"Deliberation failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Deliberation failed: {str(e)}")
+
     # Format response with token usage
     agent_responses = [
         AgentResponseData(
@@ -302,7 +433,7 @@ async def deliberate(request: DeliberateRequest):
         )
         for r in result.agent_responses
     ]
-    
+
     synthesis = None
     if result.synthesis:
         synthesis = AgentResponseData(
@@ -315,7 +446,7 @@ async def deliberate(request: DeliberateRequest):
             total_tokens=result.synthesis.total_tokens,
             model=result.synthesis.model
         )
-    
+
     sources = [
         SourceData(
             title=s.get("title", "Unknown"),
@@ -325,7 +456,7 @@ async def deliberate(request: DeliberateRequest):
         )
         for s in result.sources[:5]
     ]
-    
+
     # Build usage data from orchestrator's UsageStats
     usage = UsageData(
         prompt_tokens=result.usage.prompt_tokens,
@@ -333,7 +464,7 @@ async def deliberate(request: DeliberateRequest):
         total_tokens=result.usage.total_tokens,
         total_cost=result.usage.total_cost
     )
-    
+
     return DeliberationResult(
         query=result.query,
         timestamp=result.timestamp,
@@ -343,6 +474,81 @@ async def deliberate(request: DeliberateRequest):
         total_agents=result.total_agents,
         usage=usage
     )
+
+
+@app.post("/api/fast")
+async def fast_deliberate(request: Request):
+    """
+    Fast Mode - Quick response with only 1 agent (2-3 seconds instead of 15-25)
+    Perfect for simple queries and testing
+    """
+    # Parse request
+    try:
+        data = await request.json()
+        validated = ValidatedQueryRequest(**data)
+    except ValidationError as e:
+        logger.error(f"Validation error: {e}")
+        raise HTTPException(status_code=422, detail=str(e))
+    except Exception as e:
+        logger.error(f"Request parsing error: {e}")
+        raise HTTPException(status_code=400, detail="Invalid request format")
+
+    # Get API keys
+    api_keys_json = request.state.api_keys
+    api_key_manager = APIKeyManager(api_keys_json)
+
+    # Create provider
+    try:
+        llm = create_llm_provider(validated.provider, validated.model)
+
+        # Override API key if provided
+        if validated.provider == "openai":
+            api_key = api_key_manager.get_key("openai")
+            if api_key:
+                from openai import AsyncOpenAI
+                llm.client = AsyncOpenAI(api_key=api_key)
+        elif validated.provider == "gemini":
+            api_key = api_key_manager.get_key("gemini")
+            if api_key:
+                import google.generativeai as genai
+                genai.configure(api_key=api_key)
+    except Exception as e:
+        logger.error(f"Provider creation failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to create LLM provider: {str(e)}")
+
+    # Get context if needed
+    context = []
+    if validated.use_knowledge_base:
+        try:
+            from src.knowledge.retriever import query_knowledge
+            chunks = query_knowledge(validated.query, top_k=3)
+            context = [chunk["text"] for chunk in chunks]
+        except Exception as e:
+            logger.warning(f"Knowledge base query failed: {e}")
+
+    # Fast response - only 1 agent
+    try:
+        response = await fast_response(validated.query, llm, context)
+        logger.info(f"Fast mode completed: {response.total_tokens} tokens")
+    except Exception as e:
+        logger.error(f"Fast mode failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Fast mode failed: {str(e)}")
+
+    # Return simple response
+    return {
+        "query": validated.query,
+        "response": response.content,
+        "agent": response.agent_name,
+        "provider": response.provider_used,
+        "model": response.model,
+        "tokens": {
+            "prompt": response.prompt_tokens,
+            "completion": response.completion_tokens,
+            "total": response.total_tokens
+        },
+        "mode": "fast",
+        "info": "Fast mode uses only 1 agent for quick responses (2-3s instead of 15-25s)"
+    }
 
 
 @app.post("/api/ingest")
@@ -430,33 +636,49 @@ async def export_session(session_id: str, format: str = "markdown"):
         raise HTTPException(status_code=400, detail="Invalid format. Use 'markdown', 'html', or 'pdf'")
 
 
-@app.get("/api/deliberate/stream")
-async def deliberate_stream(
-    query: str,
-    provider: str = "openai",
-    model: str = "gpt-4o",
-    use_knowledge_base: bool = True
-):
+@app.post("/api/deliberate/stream")
+async def deliberate_stream(request: Request):
     """
-    Stream council deliberation via Server-Sent Events.
+    Stream council deliberation via Server-Sent Events with API key support.
     Each agent's response is streamed token by token.
     """
-    
+
+    # Parse and validate request
+    try:
+        data = await request.json()
+        query = data.get("query")
+        provider = data.get("provider", "openai")
+        model = data.get("model", "gpt-4o")
+        use_knowledge_base = data.get("use_knowledge_base", True)
+
+        if not query:
+            raise ValueError("Query is required")
+
+    except Exception as e:
+        logger.error(f"Stream request parsing error: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+
+    # Get API keys from request state
+    api_keys = request.state.api_keys
+
     async def event_generator():
         try:
-            # Create LLM provider
-            # Create LLM provider
-            if provider == "openai":
-                llm = OpenAIProvider(model=model)
-            elif provider == "grok":
-                llm = GrokProvider(model=model)
-            elif provider == "deepseek":
-                llm = DeepSeekProvider(model=model)
-            elif provider == "openrouter":
-                llm = OpenRouterProvider(model=model)
-            else:
-                llm = GeminiProvider(model=model)
-            
+            # Create LLM provider with API keys
+            try:
+                logger.info(f"Stream: Creating provider {provider}/{model}")
+                logger.info(f"Stream: API keys present: {bool(api_keys)}")
+
+                llm = APIKeyManager.create_provider_with_keys(
+                    provider_name=provider,
+                    model=model,
+                    encoded_keys=api_keys
+                )
+                logger.info(f"Stream: Created provider {provider}/{model}")
+            except Exception as e:
+                logger.error(f"Failed to create provider: {e}")
+                yield f"data: {json.dumps({'event': 'error', 'message': f'Failed to create provider: {str(e)}'})}\n\n"
+                return
+
             # Create agents
             agents = [
                 Strategist(llm),
@@ -465,7 +687,7 @@ async def deliberate_stream(
                 Expert(llm),
             ]
             synthesizer = Synthesizer(llm)
-            
+
             # Get context from knowledge base
             context = []
             sources = []
@@ -475,32 +697,37 @@ async def deliberate_stream(
                     context = [c["text"] for c in chunks]
                     sources = format_sources_for_display(chunks)
                 except Exception as e:
-                    print(f"KB error: {e}")
-            
+                    logger.warning(f"KB error: {e}")
+
             # Send sources info
             yield f"data: {json.dumps({'event': 'sources', 'sources': sources})}\n\n"
-            
+
             # Stream each agent sequentially
             all_responses = []
             for agent in agents:
                 # Signal agent start
                 yield f"data: {json.dumps({'event': 'agent_start', 'agent': agent.name, 'emoji': agent.emoji, 'role': agent.role})}\n\n"
-                
+
                 full_response = ""
-                async for token in agent.analyze_stream(query, context):
-                    full_response += token
-                    yield f"data: {json.dumps({'event': 'delta', 'agent': agent.name, 'content': token})}\n\n"
-                
+                try:
+                    async for token in agent.analyze_stream(query, context):
+                        full_response += token
+                        yield f"data: {json.dumps({'event': 'delta', 'agent': agent.name, 'content': token})}\n\n"
+                except Exception as e:
+                    logger.error(f"Agent {agent.name} streaming error: {e}")
+                    yield f"data: {json.dumps({'event': 'error', 'agent': agent.name, 'message': str(e)})}\n\n"
+                    continue
+
                 # Store response for synthesis
                 all_responses.append({
                     'agent_name': f"{agent.emoji} {agent.name}",
                     'role': agent.role,
                     'content': full_response
                 })
-                
+
                 # Signal agent done
                 yield f"data: {json.dumps({'event': 'agent_done', 'agent': agent.name})}\n\n"
-            
+
             # Convert to mock AgentResponse objects for synthesizer
             from src.agents.base import AgentResponse
             mock_responses = [
@@ -513,21 +740,27 @@ async def deliberate_stream(
                 )
                 for r in all_responses
             ]
-            
+
             # Stream synthesis
             yield f"data: {json.dumps({'event': 'synthesis_start', 'agent': 'Syntezator', 'emoji': '🔮', 'role': 'Synthesizer'})}\n\n"
-            
+
             synthesis_content = ""
-            async for token in synthesizer.synthesize_stream(query, context, mock_responses):
-                synthesis_content += token
-                yield f"data: {json.dumps({'event': 'delta', 'agent': 'Syntezator', 'content': token})}\n\n"
-            
+            try:
+                async for token in synthesizer.synthesize_stream(query, context, mock_responses):
+                    synthesis_content += token
+                    yield f"data: {json.dumps({'event': 'delta', 'agent': 'Syntezator', 'content': token})}\n\n"
+            except Exception as e:
+                logger.error(f"Synthesis streaming error: {e}")
+                yield f"data: {json.dumps({'event': 'error', 'agent': 'Syntezator', 'message': str(e)})}\n\n"
+
             yield f"data: {json.dumps({'event': 'synthesis_done', 'agent': 'Syntezator'})}\n\n"
-            
+
             # Final complete event
             yield f"data: {json.dumps({'event': 'complete', 'total_agents': len(agents) + 1})}\n\n"
-            
+            logger.info(f"Stream completed successfully")
+
         except Exception as e:
+            logger.error(f"Stream error: {e}", exc_info=True)
             yield f"data: {json.dumps({'event': 'error', 'message': str(e)})}\n\n"
     
     return StreamingResponse(
@@ -557,18 +790,9 @@ async def debate_stream(
     2. Reactions - agents comment on each other
     3. Consensus - synthesizer identifies agreements/disagreements
     """
-    
+
     # Create LLM provider
-    if provider == "openai":
-        llm = OpenAIProvider(model=model)
-    elif provider == "grok":
-        llm = GrokProvider(model=model)
-    elif provider == "deepseek":
-        llm = DeepSeekProvider(model=model)
-    elif provider == "openrouter":
-        llm = OpenRouterProvider(model=model)
-    else:
-        llm = GeminiProvider(model=model)
+    llm = create_llm_provider(provider, model)
     
     # Create debate orchestrator
     orchestrator = DebateOrchestrator(use_knowledge_base=use_knowledge_base)
@@ -655,19 +879,8 @@ async def historical_deliberate_stream(
     ids = [a.strip() for a in agent_ids.split(",") if a.strip()] if agent_ids else None
     
     # Create LLM provider
-    # Create LLM provider
-    from src.llm_providers import DeepSeekProvider
-    if provider == "openai":
-        llm = OpenAIProvider(model=model)
-    elif provider == "grok":
-        llm = GrokProvider(model=model)
-    elif provider == "deepseek":
-        llm = DeepSeekProvider(model=model)
-    elif provider == "openrouter":
-        llm = OpenRouterProvider(model=model)
-    else:
-        llm = GeminiProvider(model=model)
-    
+    llm = create_llm_provider(provider, model)
+
     # Create Historical Council
     council = HistoricalCouncil(use_knowledge_base=True)
     
@@ -719,21 +932,10 @@ async def council_mode_stream(
     mode_instance = get_mode(mode)
     if not mode_instance:
         return {"error": f"Unknown mode: {mode}"}
-    
+
     # Create LLM provider
-    # Create LLM provider
-    from src.llm_providers import DeepSeekProvider
-    if provider == "openai":
-        llm = OpenAIProvider(model=model)
-    elif provider == "grok":
-        llm = GrokProvider(model=model)
-    elif provider == "deepseek":
-        llm = DeepSeekProvider(model=model)
-    elif provider == "openrouter":
-        llm = OpenRouterProvider(model=model)
-    else:
-        llm = GeminiProvider(model=model)
-    
+    llm = create_llm_provider(provider, model)
+
     return StreamingResponse(
         mode_instance.run_stream(query, llm),
         media_type="text/event-stream",
@@ -860,17 +1062,8 @@ async def test_custom_agent(request: AgentTestRequest):
     
     # Create provider
     # Create provider
-    if request.provider == "openai":
-        llm = OpenAIProvider(model=request.model)
-    elif request.provider == "grok":
-        llm = GrokProvider(model=request.model)
-    elif request.provider == "deepseek":
-        llm = DeepSeekProvider(model=request.model)
-    elif request.provider == "openrouter":
-        llm = OpenRouterProvider(model=request.model)
-    else:
-        llm = GeminiProvider(model=request.model)
-    
+    llm = create_llm_provider(request.provider, request.model)
+
     # Create and test agent
     agent = CustomAgent(config, llm)
     
@@ -1091,19 +1284,8 @@ async def generate_seo_article(request: SEOGenerateRequest):
     6. Store in Pinecone
     """
     # Create LLM provider
-    from src.llm_providers import DeepSeekProvider, PerplexityProvider
-    
-    if request.provider == "openai":
-        llm = OpenAIProvider(model=request.model)
-    elif request.provider == "grok":
-        llm = GrokProvider(model=request.model)
-    elif request.provider == "deepseek":
-        llm = DeepSeekProvider(model=request.model)
-    elif request.provider == "perplexity":
-        llm = PerplexityProvider(model=request.model)
-    else:
-        llm = GeminiProvider(model=request.model)
-    
+    llm = create_llm_provider(request.provider, request.model)
+
     generator = ArticleGenerator()
     
     result = await generator.generate(
@@ -1389,19 +1571,10 @@ class ArticleImproveRequest(BaseModel):
 async def improve_seo_article(article_id: str, request: ArticleImproveRequest):
     """Improve existing article with new instructions"""
     from src.llm_providers import DeepSeekProvider
-    
+
     # Create LLM provider
-    if request.provider == "openai":
-        llm = OpenAIProvider(model=request.model)
-    elif request.provider == "grok":
-        llm = GrokProvider(model=request.model)
-    elif request.provider == "deepseek":
-        llm = DeepSeekProvider(model=request.model)
-    elif request.provider == "openrouter":
-        llm = OpenRouterProvider(model=request.model)
-    else:
-        llm = GeminiProvider(model=request.model)
-    
+    llm = create_llm_provider(request.provider, request.model)
+
     generator = ArticleGenerator()
     result = await generator.improve(article_id, request.instructions, llm)
     

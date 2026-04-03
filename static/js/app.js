@@ -296,10 +296,20 @@ function initCustomSelects() {
     });
 
     // 2. PROVIDER SELECT
+    const providerEmojis = {
+        'openai': '🤖',
+        'grok': '🚀',
+        'gemini': '💎',
+        'deepseek': '🧠',
+        'openrouter': '🌐',
+        'perplexity': '🔍',
+        'custom': '🔌'
+    };
+
     const providerOptions = AVAILABLE_PROVIDERS_LIST.map(p => ({
         value: p,
         label: p.charAt(0).toUpperCase() + p.slice(1),
-        emoji: p === 'openai' ? '🤖' : (p === 'grok' ? '🚀' : (p === 'gemini' ? '💎' : (p === 'deepseek' ? '🧠' : (p === 'openrouter' ? '🌐' : (p === 'perplexity' ? '🔍' : '🔌')))))
+        emoji: providerEmojis[p] || '🔌'
     }));
 
     providerSelectInstance = new CustomSelect({
@@ -837,15 +847,25 @@ async function handleSettingsPdfImport(e) {
 
 // ========== MODEL FUNCTIONS ==========
 function updateModels() {
-    const models = MODELS[currentProvider] || [];
+    let models = MODELS[currentProvider] || [];
+
+    // For custom provider, use model from localStorage
+    if (currentProvider === 'custom') {
+        const customModel = apiKeyManager.getKey('custom_model') || 'local-model';
+        models = [customModel];
+        console.log(`Custom provider selected, model: ${customModel}`);
+    }
 
     if (modelSelectInstance) {
         const options = models.map(m => ({ value: m, label: m }));
         modelSelectInstance.setOptions(options);
 
-        if (!models.includes(currentModel)) {
+        // Always set to first model when switching providers
+        if (models.length > 0) {
             currentModel = models[0];
             modelSelectInstance.setValue(currentModel, false); // Don't trigger change callback to avoid loop
+            localStorage.setItem('ai_council_last_model', currentModel);
+            console.log(`Model updated to: ${currentModel}`);
         }
     }
 }
@@ -1224,70 +1244,81 @@ function handleMentorsComplete(totalAgents) {
 }
 
 function deliberateStream(query) {
-    const params = new URLSearchParams({
-        query: query,
-        provider: currentProvider,
-        model: currentModel,
-        use_knowledge_base: kbToggle?.checked ?? true
-    });
-
     // Reset streaming state
     streamingAgentResponses = {};
 
     // Show streaming UI
     showStreamingUI();
 
-    streamingEventSource = new EventSource(`/api/deliberate/stream?${params}`);
+    // Use streamWithFetch instead of EventSource (supports custom headers)
+    const requestData = {
+        query: query,
+        provider: currentProvider,
+        model: currentModel,
+        use_knowledge_base: kbToggle?.checked ?? true
+    };
 
-    streamingEventSource.onmessage = (event) => {
-        const data = JSON.parse(event.data);
+    streamWithFetch(
+        '/api/deliberate/stream',
+        requestData,
+        // onEvent
+        (data) => {
+            switch (data.event) {
+                case 'sources':
+                    handleSources(data.sources);
+                    break;
 
-        switch (data.event) {
-            case 'sources':
-                handleSources(data.sources);
-                break;
+                case 'agent_start':
+                    handleAgentStart(data.agent, data.emoji, data.role);
+                    break;
 
-            case 'agent_start':
-                handleAgentStart(data.agent, data.emoji, data.role);
-                break;
+                case 'delta':
+                    handleDelta(data.agent, data.content);
+                    break;
 
-            case 'delta':
-                handleDelta(data.agent, data.content);
-                break;
+                case 'agent_done':
+                    handleAgentDone(data.agent);
+                    break;
 
-            case 'agent_done':
-                handleAgentDone(data.agent);
-                break;
+                case 'synthesis_start':
+                    handleSynthesisStart(data.agent, data.emoji, data.role);
+                    break;
 
-            case 'synthesis_start':
-                handleSynthesisStart(data.agent, data.emoji, data.role);
-                break;
+                case 'synthesis_done':
+                    handleSynthesisDone();
+                    break;
 
-            case 'synthesis_done':
-                handleSynthesisDone();
-                break;
+                case 'complete':
+                    handleComplete(data.total_agents);
+                    break;
 
-            case 'complete':
-                handleComplete(data.total_agents);
-                streamingEventSource.close();
-                streamingEventSource = null;
-                break;
-
-            case 'error':
-                showToast('Błąd streamingu: ' + data.message, 'error');
-                streamingEventSource.close();
-                streamingEventSource = null;
-                showWelcome();
-                break;
+                case 'error':
+                    showToast('Błąd streamingu: ' + data.message, 'error');
+                    showWelcome();
+                    break;
+            }
+        },
+        // onError
+        (error) => {
+            console.error('Stream Error:', error);
+            const errorInfo = handleError(error, 'streaming');
+            if (errorInfo.shouldQueue) {
+                requestQueue.add({
+                    url: '/api/deliberate/stream',
+                    options: {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(requestData)
+                    }
+                });
+            }
+            showWelcome();
+        },
+        // onComplete
+        () => {
+            console.log('Stream completed');
         }
-    };
-
-    streamingEventSource.onerror = (error) => {
-        console.error('SSE Error:', error);
-        streamingEventSource.close();
-        streamingEventSource = null;
-        showToast('Połączenie z serwerem przerwane', 'error');
-    };
+    );
 }
 
 function showStreamingUI() {
@@ -2169,9 +2200,15 @@ async function loadStats() {
     try {
         const response = await fetch('/api/stats');
         const stats = await response.json();
-        document.getElementById('kb-vectors').textContent = `${(stats.total_vectors || 0).toLocaleString()} chunków`;
+        const kbVectorsEl = document.getElementById('kb-vectors');
+        if (kbVectorsEl) {
+            kbVectorsEl.textContent = `${(stats.total_vectors || 0).toLocaleString()} chunków`;
+        }
     } catch (err) {
-        document.getElementById('kb-vectors').textContent = 'Niedostępna';
+        const kbVectorsEl = document.getElementById('kb-vectors');
+        if (kbVectorsEl) {
+            kbVectorsEl.textContent = 'Niedostępna';
+        }
     }
 }
 

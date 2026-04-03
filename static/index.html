@@ -630,6 +630,19 @@
                             Ustawienia LLM
                         </h3>
                         <div class="space-y-4">
+                            <!-- API Keys Button -->
+                            <div class="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
+                                <div class="flex items-center justify-between">
+                                    <div>
+                                        <p class="font-medium text-sm">🔑 API Keys</p>
+                                        <p class="text-xs text-text-secondary mt-1">Zarządzaj kluczami API (localStorage)</p>
+                                    </div>
+                                    <button onclick="showAPIKeysModal()"
+                                        class="bg-primary hover:bg-primary-hover text-white px-4 py-2 rounded-lg text-sm font-medium transition">
+                                        Konfiguruj
+                                    </button>
+                                </div>
+                            </div>
                             <div>
                                 <label class="block text-sm text-text-secondary mb-2">Domyślny provider</label>
                                 <select id="setting-default-provider"
@@ -637,6 +650,10 @@
                                     <option value="openai">OpenAI</option>
                                     <option value="grok">Grok (xAI)</option>
                                     <option value="gemini">Google Gemini</option>
+                                    <option value="deepseek">DeepSeek</option>
+                                    <option value="perplexity">Perplexity</option>
+                                    <option value="openrouter">OpenRouter</option>
+                                    <option value="custom">Custom API</option>
                                 </select>
                             </div>
                             <div>
@@ -1252,26 +1269,27 @@
                 <div id="settings-tab-config" class="settings-tab-content hidden">
                     <h3 class="text-lg font-bold mb-4">⚙️ Konfiguracja Aplikacji</h3>
                     <div class="space-y-6">
-                        <!-- Default Provider -->
-                        <div>
-                            <label class="block text-sm text-text-secondary mb-2">Domyślny dostawca LLM</label>
-                            <select id="setting-default-provider"
-                                class="w-full bg-white dark:bg-black/20 border border-gray-200 dark:border-white/10 rounded-lg px-3 py-2">
-                                <option value="openai">OpenAI</option>
-                                <option value="grok">Grok</option>
-                                <option value="gemini">Gemini</option>
-                                <option value="deepseek">DeepSeek</option>
-                            </select>
+                        <!-- API Keys Button -->
+                        <div class="bg-blue-500/10 border border-blue-500/20 rounded-xl p-4">
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <p class="font-medium text-blue-400 mb-1">🔑 Klucze API</p>
+                                    <p class="text-sm text-text-secondary">Skonfiguruj klucze API dla różnych providerów</p>
+                                </div>
+                                <button onclick="showAPIKeysModal()"
+                                    class="px-4 py-2 bg-primary hover:bg-primary-hover text-white rounded-lg text-sm font-medium transition-colors">
+                                    Zarządzaj
+                                </button>
+                            </div>
                         </div>
-                        <!-- Default Model -->
-                        <div>
-                            <label class="block text-sm text-text-secondary mb-2">Domyślny model</label>
-                            <select id="setting-default-model"
-                                class="w-full bg-white dark:bg-black/20 border border-gray-200 dark:border-white/10 rounded-lg px-3 py-2">
-                                <option value="gpt-4o">gpt-4o</option>
-                                <option value="gpt-4o-mini">gpt-4o-mini</option>
-                            </select>
+
+                        <!-- Info about provider selection -->
+                        <div class="bg-white/5 border border-white/10 rounded-xl p-4">
+                            <p class="text-sm text-text-secondary">
+                                💡 <strong>Wybór providera i modelu:</strong> Użyj dropdown w górnym menu (obok tytułu strony) aby wybrać providera i model dla bieżącej sesji.
+                            </p>
                         </div>
+
                         <!-- Temperature -->
                         <div>
                             <label class="block text-sm text-text-secondary mb-2">Temperatura: <span
@@ -1321,6 +1339,9 @@
         </div>
     </div>
 
+    <script src="/static/js/api-keys.js"></script>
+    <script src="/static/js/error-recovery.js"></script>
+    <script src="/static/js/api-wrapper.js"></script>
     <script src="/static/js/app.js"></script>
 </body>
 

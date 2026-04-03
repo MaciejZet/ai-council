@@ -2,7 +2,7 @@
 LLM Provider Abstraction Layer
 ===============================
 Obsługuje wiele providerów LLM: OpenAI, Grok (xAI), Gemini, DeepSeek, Perplexity, OpenRouter
-Z obsługą zwracania usage (tokeny)
+Z obsługą zwracania usage (tokeny) i retry logic
 """
 
 import os
@@ -10,6 +10,9 @@ from abc import ABC, abstractmethod
 from typing import Optional, Tuple, Dict, Any, AsyncGenerator, List
 from dataclasses import dataclass
 from dotenv import load_dotenv
+
+# Import retry decorators
+from src.utils.error_handler import retry_with_backoff, timeout
 
 load_dotenv()
 
@@ -59,6 +62,7 @@ TOKEN_COSTS = {
     # Perplexity
     "sonar": {"input": 0.001, "output": 0.001},
     "sonar-pro": {"input": 0.003, "output": 0.015},
+    "sonar-reasoning": {"input": 0.001, "output": 0.005},
     # OpenRouter (prices vary significantly, these are placeholders/averages)
     "openrouter-default": {"input": 0.001, "output": 0.002},
 }
@@ -102,12 +106,17 @@ class LLMProvider(ABC):
 
 class OpenAIProvider(LLMProvider):
     """Provider dla OpenAI GPT"""
-    
-    def __init__(self, model: str = "gpt-4o"):
+
+    def __init__(self, model: str = "gpt-4o", base_url: Optional[str] = None, api_key: Optional[str] = None):
         from openai import AsyncOpenAI
-        self.client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY", "dummy"))
+        self.client = AsyncOpenAI(
+            api_key=api_key or os.getenv("OPENAI_API_KEY", "dummy"),
+            base_url=base_url or os.getenv("OPENAI_BASE_URL")
+        )
         self.model = model
     
+    @retry_with_backoff(max_retries=3, initial_delay=1.0)
+    @timeout(60.0)
     async def generate(self, system_prompt: str, user_prompt: str, temperature: float = 0.7, max_tokens: Optional[int] = None) -> LLMResponse:
         response = await self.client.chat.completions.create(
             model=self.model,
@@ -118,7 +127,7 @@ class OpenAIProvider(LLMProvider):
             temperature=temperature,
             max_tokens=max_tokens
         )
-        
+
         usage = response.usage
         return LLMResponse(
             content=response.choices[0].message.content,
@@ -155,15 +164,17 @@ class OpenAIProvider(LLMProvider):
 
 class GrokProvider(LLMProvider):
     """Provider dla Grok (xAI)"""
-    
-    def __init__(self, model: str = "grok-beta"):
+
+    def __init__(self, model: str = "grok-beta", base_url: Optional[str] = None, api_key: Optional[str] = None):
         from openai import AsyncOpenAI
         self.client = AsyncOpenAI(
-            api_key=os.getenv("GROK_API_KEY", "dummy"),
-            base_url="https://api.x.ai/v1"
+            api_key=api_key or os.getenv("GROK_API_KEY", "dummy"),
+            base_url=base_url or os.getenv("GROK_BASE_URL", "https://api.x.ai/v1")
         )
         self.model = model
     
+    @retry_with_backoff(max_retries=3, initial_delay=1.0)
+    @timeout(60.0)
     async def generate(self, system_prompt: str, user_prompt: str, temperature: float = 0.7, max_tokens: Optional[int] = None) -> LLMResponse:
         response = await self.client.chat.completions.create(
             model=self.model,
@@ -174,7 +185,7 @@ class GrokProvider(LLMProvider):
             temperature=temperature,
             max_tokens=max_tokens
         )
-        
+
         usage = response.usage
         return LLMResponse(
             content=response.choices[0].message.content,
@@ -213,10 +224,10 @@ class GrokProvider(LLMProvider):
 
 class GeminiProvider(LLMProvider):
     """Provider dla Google Gemini"""
-    
-    def __init__(self, model: str = "gemini-1.5-pro"):
+
+    def __init__(self, model: str = "gemini-1.5-pro", api_key: Optional[str] = None):
         import google.generativeai as genai
-        genai.configure(api_key=os.getenv("GEMINI_API_KEY", "dummy"))
+        genai.configure(api_key=api_key or os.getenv("GEMINI_API_KEY", "dummy"))
         self.model = genai.GenerativeModel(model)
         self.model_name = model
     
@@ -251,14 +262,15 @@ class GeminiProvider(LLMProvider):
         return f"Gemini ({self.model_name})"
     
     async def generate_stream(
-        self, 
-        system_prompt: str, 
-        user_prompt: str, 
-        temperature: float = 0.7
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        temperature: float = 0.7,
+        max_tokens: Optional[int] = None
     ) -> AsyncGenerator[str, None]:
         """Streamuje tokeny odpowiedzi z Gemini"""
         full_prompt = f"{system_prompt}\n\n---\n\n{user_prompt}"
-        
+
         generation_config = {"temperature": temperature}
         if max_tokens:
             generation_config["max_output_tokens"] = max_tokens
@@ -276,15 +288,17 @@ class GeminiProvider(LLMProvider):
 
 class DeepSeekProvider(LLMProvider):
     """Provider dla DeepSeek (OpenAI-compatible API)"""
-    
-    def __init__(self, model: str = "deepseek-chat"):
+
+    def __init__(self, model: str = "deepseek-chat", base_url: Optional[str] = None, api_key: Optional[str] = None):
         from openai import AsyncOpenAI
         self.client = AsyncOpenAI(
-            api_key=os.getenv("DEEPSEEK_API_KEY", "dummy"),
-            base_url="https://api.deepseek.com"
+            api_key=api_key or os.getenv("DEEPSEEK_API_KEY", "dummy"),
+            base_url=base_url or os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
         )
         self.model = model
     
+    @retry_with_backoff(max_retries=3, initial_delay=1.0)
+    @timeout(60.0)
     async def generate(self, system_prompt: str, user_prompt: str, temperature: float = 0.7, max_tokens: Optional[int] = None) -> LLMResponse:
         response = await self.client.chat.completions.create(
             model=self.model,
@@ -295,7 +309,7 @@ class DeepSeekProvider(LLMProvider):
             temperature=temperature,
             max_tokens=max_tokens
         )
-        
+
         usage = response.usage
         return LLMResponse(
             content=response.choices[0].message.content,
@@ -335,20 +349,22 @@ class DeepSeekProvider(LLMProvider):
 class PerplexityProvider(LLMProvider):
     """
     Provider dla Perplexity AI (OpenAI-compatible API)
-    
+
     Models:
     - sonar: Fast, cost-effective search (128K context)
     - sonar-pro: Advanced search with deeper analysis
     """
-    
-    def __init__(self, model: str = "sonar-pro"):
+
+    def __init__(self, model: str = "sonar-pro", base_url: Optional[str] = None, api_key: Optional[str] = None):
         from openai import AsyncOpenAI
         self.client = AsyncOpenAI(
-            api_key=os.getenv("PERPLEXITY_API_KEY", "dummy"),
-            base_url="https://api.perplexity.ai"
+            api_key=api_key or os.getenv("PERPLEXITY_API_KEY", "dummy"),
+            base_url=base_url or os.getenv("PERPLEXITY_BASE_URL", "https://api.perplexity.ai")
         )
         self.model = model
     
+    @retry_with_backoff(max_retries=3, initial_delay=1.0)
+    @timeout(60.0)
     async def generate(self, system_prompt: str, user_prompt: str, temperature: float = 0.7, max_tokens: Optional[int] = None) -> LLMResponse:
         response = await self.client.chat.completions.create(
             model=self.model,
@@ -359,7 +375,7 @@ class PerplexityProvider(LLMProvider):
             temperature=temperature,
             max_tokens=max_tokens
         )
-        
+
         usage = response.usage
         return LLMResponse(
             content=response.choices[0].message.content,
@@ -400,12 +416,12 @@ class OpenRouterProvider(LLMProvider):
     """
     Provider dla OpenRouter (Unified Interface for LLMs)
     """
-    
-    def __init__(self, model: str = "google/gemini-2.0-flash-exp:free"):
+
+    def __init__(self, model: str = "google/gemini-2.0-flash-exp:free", base_url: Optional[str] = None, api_key: Optional[str] = None):
         from openai import AsyncOpenAI
         self.client = AsyncOpenAI(
-            api_key=os.getenv("OPENROUTER_API_KEY", "dummy"),
-            base_url="https://openrouter.ai/api/v1"
+            api_key=api_key or os.getenv("OPENROUTER_API_KEY", "dummy"),
+            base_url=base_url or os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
         )
         self.model = model
     
@@ -444,10 +460,11 @@ class OpenRouterProvider(LLMProvider):
         return f"OpenRouter ({self.model})"
     
     async def generate_stream(
-        self, 
-        system_prompt: str, 
-        user_prompt: str, 
-        temperature: float = 0.7
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        temperature: float = 0.7,
+        max_tokens: Optional[int] = None
     ) -> AsyncGenerator[str, None]:
         """Streamuje tokeny odpowiedzi z OpenRouter"""
         response = await self.client.chat.completions.create(
@@ -491,32 +508,45 @@ def get_provider(provider_name: Optional[str] = None, model: Optional[str] = Non
     """
     if provider_name is None:
         provider_name = os.getenv("DEFAULT_LLM_PROVIDER", "openai")
-    
+
     default_models = {
         "openai": "gpt-4o",
         "grok": "grok-beta",
         "gemini": "gemini-3-pro-preview",
         "deepseek": "deepseek-chat",
         "perplexity": "sonar-pro",
-        "openrouter": "google/gemini-3-pro-preview:free"
+        "openrouter": "google/gemini-3-pro-preview:free",
+        "custom": os.getenv("CUSTOM_MODEL", "local-model")
     }
-    
+
     providers = {
         "openai": OpenAIProvider,
         "grok": GrokProvider,
         "gemini": GeminiProvider,
         "deepseek": DeepSeekProvider,
         "perplexity": PerplexityProvider,
-        "openrouter": OpenRouterProvider
+        "openrouter": OpenRouterProvider,
+        "custom": lambda model: __import_custom_provider(model)
     }
-    
+
     if provider_name not in providers:
         raise ValueError(f"Nieznany provider: {provider_name}. Dostępne: {list(providers.keys())}")
-    
+
     model_to_use = model or default_models.get(provider_name)
+
+    # Special handling for custom provider
+    if provider_name == "custom":
+        from src.custom_api_provider import CustomAPIProvider
+        return CustomAPIProvider(model=model_to_use)
+
     return providers[provider_name](model=model_to_use)
 
 
+def __import_custom_provider(model: str):
+    """Helper to import custom provider"""
+    from src.custom_api_provider import CustomAPIProvider
+    return CustomAPIProvider(model=model)
+
+
 # Lista dostępnych providerów
-# Lista dostępnych providerów
-AVAILABLE_PROVIDERS = ["openai", "grok", "gemini", "deepseek", "perplexity", "openrouter"]
+AVAILABLE_PROVIDERS = ["openai", "grok", "gemini", "deepseek", "perplexity", "openrouter", "custom"]

@@ -1,0 +1,39 @@
+
+=== APIKeyManager.create_provider_with_keys ===
+  provider_name: custom
+  model: claude-haiku-4-5-20251001
+  base_url: https://api.quatarly.cloud/v1
+  api_key: ***
+  encoded_keys present: True
+===============================================
+  Using custom model from localStorage: claude-haiku-4-5-20251001
+
+=== CustomAPIProvider.__init__ ===
+  model: claude-haiku-4-5-20251001
+  base_url: https://api.quatarly.cloud/v1
+  api_key: qua-1100eeebe8ff00e4...===================================
+
+=== CustomAPIProvider.generate_stream ===
+  base_url: https://api.quatarly.cloud/v1
+  model: claude-haiku-4-5-20251001
+  api_key: qua-1100eeebe8ff00e4...=========================================
+
+=== CustomAPIProvider.generate_stream ===
+  base_url: https://api.quatarly.cloud/v1
+  model: claude-haiku-4-5-20251001
+  api_key: qua-1100eeebe8ff00e4...=========================================
+
+=== CustomAPIProvider.generate_stream ===
+  base_url: https://api.quatarly.cloud/v1
+  model: claude-haiku-4-5-20251001
+  api_key: qua-1100eeebe8ff00e4...=========================================
+
+=== CustomAPIProvider.generate_stream ===
+  base_url: https://api.quatarly.cloud/v1
+  model: claude-haiku-4-5-20251001
+  api_key: qua-1100eeebe8ff00e4...=========================================
+
+=== CustomAPIProvider.generate_stream ===
+  base_url: https://api.quatarly.cloud/v1
+  model: claude-haiku-4-5-20251001
+  api_key: qua-1100eeebe8ff00e4...=========================================
