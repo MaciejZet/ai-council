@@ -36,6 +36,11 @@ class QueryRequest(BaseModel):
     chat_mode: bool = Field(default=False)
     attachment_text: str = Field(default="", max_length=MAX_ATTACHMENT_SIZE)
     history: Optional[List[Dict[str, Any]]] = Field(default=None, max_items=MAX_HISTORY_ITEMS)
+    # Routing: auto = subset of agents by intent; full = all four core agents
+    routing_mode: str = Field(default="auto", pattern="^(auto|full)$")
+    # Server-side session persistence (data/sessions)
+    persist_session: bool = Field(default=False)
+    session_id: Optional[str] = Field(default=None, max_length=128)
 
     @validator("query")
     def validate_query(cls, v):
@@ -48,17 +53,20 @@ class QueryRequest(BaseModel):
 
     @validator("history")
     def validate_history(cls, v):
-        """Validate history structure"""
+        """Validate history structure (chat UI or role-based)."""
         if v is None:
             return v
 
         for item in v:
             if not isinstance(item, dict):
                 raise ValueError("History items must be dictionaries")
-            if "role" not in item or "content" not in item:
-                raise ValueError("History items must have 'role' and 'content' fields")
-            if item["role"] not in ["user", "assistant", "system"]:
-                raise ValueError("Invalid role in history")
+            if "query" in item or "synthesis" in item:
+                continue
+            if "role" in item and "content" in item:
+                if item["role"] not in ["user", "assistant", "system"]:
+                    raise ValueError("Invalid role in history")
+                continue
+            raise ValueError("History items need query/synthesis or role/content fields")
 
         return v
 

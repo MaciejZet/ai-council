@@ -41,15 +41,18 @@ class SessionData:
     responses: List[Dict[str, Any]] = field(default_factory=list)
     synthesis: Optional[str] = None
     sources: List[Dict[str, Any]] = field(default_factory=list)
-    
+    # Skrócona historia tur (persist między żądaniami)
+    chat_turns: List[Dict[str, Any]] = field(default_factory=list)
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "metadata": self.metadata.to_dict(),
             "responses": self.responses,
             "synthesis": self.synthesis,
-            "sources": self.sources
+            "sources": self.sources,
+            "chat_turns": self.chat_turns,
         }
-    
+
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "SessionData":
         """Tworzy obiekt z danych słownikowych"""
@@ -58,7 +61,8 @@ class SessionData:
             metadata=metadata,
             responses=data.get("responses", []),
             synthesis=data.get("synthesis"),
-            sources=data.get("sources", [])
+            sources=data.get("sources", []),
+            chat_turns=data.get("chat_turns", []),
         )
 
 
@@ -250,6 +254,85 @@ def create_session_from_result(
         synthesis=result.synthesis.content if result.synthesis else None,
         sources=result.sources if hasattr(result, 'sources') else []
     )
+
+
+def save_deliberation_to_session(
+    query: str,
+    result: Any,
+    council_type: str = "standard",
+    session_id: Optional[str] = None,
+) -> str:
+    """
+    Zapisuje wynik CouncilDeliberation (lub kompatybilny) do pliku sesji.
+    Przy session_id dokleja turę do chat_turns i nadpisuje najnowsze responses/synthesis.
+    """
+    from src.llm_providers import calculate_cost
+
+    total_tokens = 0
+    for resp in result.agent_responses:
+        total_tokens += getattr(resp, "total_tokens", 0)
+    if result.synthesis:
+        total_tokens += getattr(result.synthesis, "total_tokens", 0)
+
+    model = getattr(result.agent_responses[0], "model", "") if result.agent_responses else ""
+    provider = getattr(result.agent_responses[0], "provider_used", "") if result.agent_responses else ""
+
+    responses = [
+        {
+            "agent_name": resp.agent_name,
+            "role": resp.role,
+            "content": resp.content,
+        }
+        for resp in result.agent_responses
+    ]
+    synthesis_text = result.synthesis.content if result.synthesis else None
+    sources = result.sources if hasattr(result, "sources") else []
+
+    cost = calculate_cost(model or "gpt-4o", total_tokens // 2, total_tokens // 2) if total_tokens else 0.0
+
+    history = SessionHistory()
+    if session_id:
+        existing = history.load_session(session_id)
+        if existing:
+            turn = {
+                "query": query,
+                "timestamp": datetime.now().isoformat(),
+                "synthesis": synthesis_text,
+            }
+            existing.chat_turns.append(turn)
+            existing.responses = responses
+            existing.synthesis = synthesis_text
+            existing.sources = sources
+            existing.metadata.total_tokens = total_tokens
+            existing.metadata.cost_usd = cost
+            history.save_session(existing)
+            return existing.metadata.id
+
+    metadata = SessionMetadata(
+        id=str(uuid.uuid4()),
+        timestamp=datetime.now().isoformat(),
+        query=query,
+        council_type=council_type,
+        agents_used=[r["agent_name"] for r in responses],
+        model=model or "gpt-4o",
+        provider=provider or "openai",
+        total_tokens=total_tokens,
+        cost_usd=cost,
+    )
+    session = SessionData(
+        metadata=metadata,
+        responses=responses,
+        synthesis=synthesis_text,
+        sources=sources,
+        chat_turns=[
+            {
+                "query": query,
+                "timestamp": metadata.timestamp,
+                "synthesis": synthesis_text,
+            }
+        ],
+    )
+    return history.save_session(session)
 
 
 # Globalna instancja

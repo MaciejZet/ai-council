@@ -16,7 +16,7 @@ from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, FileResponse, StreamingResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, Field, ValidationError
 
 # Import existing modules
 from src.agents.base import agent_registry, AgentResponse
@@ -27,6 +27,7 @@ from src.agents import agent_storage
 from src.agents.prompt_templates import get_all_templates, get_template, get_templates_by_category
 from src.council.orchestrator import Council, CouncilDeliberation, format_deliberation_markdown
 from src.council.debate import DebateOrchestrator
+from src.council.routing import route_query
 from src.council.fast_mode import fast_response
 from src.knowledge.ingest import ingest_pdf, get_ingestion_stats
 from src.knowledge.retriever import get_category_emoji, query_knowledge, format_sources_for_display
@@ -57,6 +58,8 @@ from src.plugins.utilities import (
     CalculatorPlugin, DateTimePlugin, HashEncodePlugin,
     UnitConverterPlugin, RandomGeneratorPlugin, TextToolsPlugin
 )
+from src.storage.session_history import save_deliberation_to_session, session_history
+from src.agents.custom_validation import validate_custom_agent_payload
 
 
 # ========== MODELS ==========
@@ -115,6 +118,8 @@ class DeliberationResult(BaseModel):
     sources: List[SourceData]
     total_agents: int
     usage: UsageData = UsageData()
+    session_id: Optional[str] = None
+    routing_intent: Optional[str] = None
 
 
 class CustomAgentRequest(BaseModel):
@@ -125,7 +130,7 @@ class CustomAgentRequest(BaseModel):
     system_prompt: str = ""
     template_id: Optional[str] = None
     tools: List[str] = []
-    context_limit: int = 5000
+    context_limit: int = Field(default=8000, ge=500, le=200000)
     memory_type: str = "session"
     enabled: bool = True
 
@@ -442,12 +447,8 @@ async def deliberate(request: Request):
         raise HTTPException(status_code=400, detail=f"Failed to create provider: {str(e)}")
 
     # Create agents with selected provider
-    agents = [
-        Strategist(llm),
-        Analyst(llm),
-        Practitioner(llm),
-        Expert(llm),
-    ]
+    routing_decision = route_query(full_query, validated.routing_mode)
+    agents = [agent_cls(llm) for agent_cls in routing_decision.agent_classes]
     synthesizer = Synthesizer(llm)
 
     # Run deliberation (pass agents explicitly — no global registry pollution)
@@ -509,6 +510,18 @@ async def deliberate(request: Request):
         total_cost=result.usage.total_cost
     )
 
+    session_id_out: Optional[str] = None
+    if validated.persist_session:
+        try:
+            session_id_out = save_deliberation_to_session(
+                full_query,
+                result,
+                council_type="standard",
+                session_id=validated.session_id,
+            )
+        except Exception as e:
+            logger.warning(f"Session persist skipped: {e}")
+
     deliberation_response = DeliberationResult(
         query=result.query,
         timestamp=result.timestamp,
@@ -516,7 +529,9 @@ async def deliberate(request: Request):
         synthesis=synthesis,
         sources=sources,
         total_agents=result.total_agents,
-        usage=usage
+        usage=usage,
+        session_id=session_id_out,
+        routing_intent=routing_decision.intent.value,
     )
 
     if not validated.chat_mode:
@@ -624,6 +639,21 @@ async def ingest_document(file: UploadFile = File(...)):
         temp_path.unlink(missing_ok=True)
 
 
+@app.get("/api/sessions")
+async def list_sessions_endpoint(limit: int = 30):
+    """List saved deliberation sessions (server-side JSON under data/sessions)."""
+    return [m.to_dict() for m in session_history.list_sessions(limit=limit)]
+
+
+@app.get("/api/sessions/{session_id}")
+async def get_session_endpoint(session_id: str):
+    """Load a single session including chat_turns history."""
+    session = session_history.load_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return session.to_dict()
+
+
 @app.get("/api/sessions/{session_id}/export")
 async def export_session(session_id: str, format: str = "markdown"):
     """
@@ -634,7 +664,7 @@ async def export_session(session_id: str, format: str = "markdown"):
         format: 'markdown', 'html', or 'pdf'
     """
     from src.storage import session_history, export_to_markdown, export_to_html, export_to_pdf
-    
+
     # Load session
     session = session_history.load_session(session_id)
     if not session:
@@ -701,9 +731,12 @@ async def deliberate_stream(request: Request):
         provider = data.get("provider", "openai")
         model = data.get("model", "gpt-4o")
         use_knowledge_base = data.get("use_knowledge_base", True)
+        routing_mode = data.get("routing_mode", "auto")
 
         if not query:
             raise ValueError("Query is required")
+        if routing_mode not in ("auto", "full"):
+            raise ValueError("routing_mode must be 'auto' or 'full'")
 
     except Exception as e:
         logger.error(f"Stream request parsing error: {e}")
@@ -730,14 +763,10 @@ async def deliberate_stream(request: Request):
                 yield f"data: {json.dumps({'event': 'error', 'message': f'Failed to create provider: {str(e)}'})}\n\n"
                 return
 
-            # Create agents
-            agents = [
-                Strategist(llm),
-                Analyst(llm),
-                Practitioner(llm),
-                Expert(llm),
-            ]
+            decision = route_query(query, routing_mode)
+            agents = [cls(llm) for cls in decision.agent_classes]
             synthesizer = Synthesizer(llm)
+            yield f"data: {json.dumps({'event': 'routing', 'intent': decision.intent.value, 'reason': decision.reason})}\n\n"
 
             # Get context from knowledge base
             context = []
@@ -755,15 +784,24 @@ async def deliberate_stream(request: Request):
 
             # Stream each agent sequentially
             all_responses = []
+            stream_timeout_s = 180.0
             for agent in agents:
+                if await request.is_disconnected():
+                    yield f"data: {json.dumps({'event': 'error', 'message': 'client disconnected'})}\n\n"
+                    return
                 # Signal agent start
                 yield f"data: {json.dumps({'event': 'agent_start', 'agent': agent.name, 'emoji': agent.emoji, 'role': agent.role})}\n\n"
 
                 full_response = ""
                 try:
-                    async for token in agent.analyze_stream(query, context):
-                        full_response += token
-                        yield f"data: {json.dumps({'event': 'delta', 'agent': agent.name, 'content': token})}\n\n"
+                    async with asyncio.timeout(stream_timeout_s):
+                        async for token in agent.analyze_stream(query, context):
+                            full_response += token
+                            yield f"data: {json.dumps({'event': 'delta', 'agent': agent.name, 'content': token})}\n\n"
+                except TimeoutError:
+                    logger.error(f"Agent {agent.name} stream timed out after {stream_timeout_s}s")
+                    yield f"data: {json.dumps({'event': 'error', 'agent': agent.name, 'message': 'stream timeout'})}\n\n"
+                    continue
                 except Exception as e:
                     logger.error(f"Agent {agent.name} streaming error: {e}")
                     yield f"data: {json.dumps({'event': 'error', 'agent': agent.name, 'message': str(e)})}\n\n"
@@ -796,9 +834,13 @@ async def deliberate_stream(request: Request):
 
             synthesis_content = ""
             try:
-                async for token in synthesizer.synthesize_stream(query, context, mock_responses):
-                    synthesis_content += token
-                    yield f"data: {json.dumps({'event': 'delta', 'agent': 'Syntezator', 'content': token})}\n\n"
+                async with asyncio.timeout(stream_timeout_s):
+                    async for token in synthesizer.synthesize_stream(query, context, mock_responses):
+                        synthesis_content += token
+                        yield f"data: {json.dumps({'event': 'delta', 'agent': 'Syntezator', 'content': token})}\n\n"
+            except TimeoutError:
+                logger.error("Synthesis stream timed out")
+                yield f"data: {json.dumps({'event': 'error', 'agent': 'Syntezator', 'message': 'stream timeout'})}\n\n"
             except Exception as e:
                 logger.error(f"Synthesis streaming error: {e}")
                 yield f"data: {json.dumps({'event': 'error', 'agent': 'Syntezator', 'message': str(e)})}\n\n"
@@ -1008,6 +1050,12 @@ async def list_custom_agents():
 @app.post("/api/agents/custom")
 async def create_custom_agent_endpoint(request: CustomAgentRequest):
     """Create a new custom agent"""
+    existing_names = [a.name.strip().lower() for a in agent_storage.load_all()]
+    ok, err = validate_custom_agent_payload(
+        request.name, request.tools, request.context_limit, existing_names, None
+    )
+    if not ok:
+        raise HTTPException(status_code=422, detail=err)
     config = CustomAgentConfig(
         name=request.name,
         emoji=request.emoji,
@@ -1020,7 +1068,7 @@ async def create_custom_agent_endpoint(request: CustomAgentRequest):
         memory_type=request.memory_type,
         enabled=request.enabled
     )
-    
+
     agent_id = agent_storage.save(config)
     return {"id": agent_id, "message": "Agent created", "agent": config.to_dict()}
 
@@ -1040,7 +1088,18 @@ async def update_custom_agent(agent_id: str, request: CustomAgentRequest):
     existing = agent_storage.get(agent_id)
     if not existing:
         raise HTTPException(status_code=404, detail="Agent not found")
-    
+
+    existing_names = [a.name.strip().lower() for a in agent_storage.load_all()]
+    ok, err = validate_custom_agent_payload(
+        request.name,
+        request.tools,
+        request.context_limit,
+        existing_names,
+        existing.name.strip().lower(),
+    )
+    if not ok:
+        raise HTTPException(status_code=422, detail=err)
+
     updates = {
         "name": request.name,
         "emoji": request.emoji,
@@ -1364,7 +1423,8 @@ async def generate_seo_article(request: SEOGenerateRequest):
             "schema_json_ld": result.schema_json_ld,
             "schema_html_script": result.schema_html_script,
             "table_of_contents": result.table_of_contents,
-            "featured_snippet_suggestions": result.featured_snippet_suggestions
+            "featured_snippet_suggestions": result.featured_snippet_suggestions,
+            "full_page_html": result.full_page_html,
         }
     else:
         return {

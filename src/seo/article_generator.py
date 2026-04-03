@@ -12,7 +12,7 @@ from datetime import datetime
 from .brand_info import BrandInfoManager
 from .ahrefs_importer import AhrefsImporter, AhrefsData
 from .article_storage import ArticleStorage, Article, ArticleMeta
-from .serp_analyzer import SERPAnalyzer, SERPAnalysisResult
+from .serp_analyzer import SERPAnalyzer, SERPAnalysisResult, analyze_serp_with_llm
 from .schema_generator import (
     SchemaGenerator, SchemaOutput,
     TableOfContentsGenerator,
@@ -37,6 +37,7 @@ class ArticleResult:
     schema_html_script: str = ""
     table_of_contents: Dict[str, Any] = field(default_factory=dict)
     featured_snippet_suggestions: Dict[str, Any] = field(default_factory=dict)
+    full_page_html: str = ""
 
 
 class ArticleGenerator:
@@ -125,7 +126,7 @@ class ArticleGenerator:
                     max_competitors=5
                 )
                 result.serp_analysis = serp_result
-            
+
             # 4. Pobierz kontekst marki
             brand_context = ""
             if include_brand_info:
@@ -145,11 +146,18 @@ class ArticleGenerator:
                     perplexity_model
                 )
             
-            # 7. Wygeneruj artykuł
+            # 7. LLM + wygeneruj artykuł
             if main_llm_provider is None:
                 from src.llm_providers import OpenAIProvider
                 main_llm_provider = OpenAIProvider(model="gpt-4o")
-            
+
+            if analyze_serp and serp_result and serp_result.competitors:
+                try:
+                    serp_result = await analyze_serp_with_llm(topic, serp_result, main_llm_provider)
+                    result.serp_analysis = serp_result
+                except Exception as exc:
+                    print(f"SERP LLM enrichment error: {exc}")
+
             article_content, usage = await self._generate_article_content(
                 topic=topic,
                 keywords=keywords,
@@ -213,7 +221,13 @@ class ArticleGenerator:
             result.schema_html_script = schema_output.to_html_script()
             result.table_of_contents = toc_data
             result.featured_snippet_suggestions = snippet_analysis
-            
+            result.full_page_html = self._build_full_page_html(
+                title=article.title,
+                toc_html=toc_data.get("html", ""),
+                body_html=article_html_with_anchors,
+                schema_script=result.schema_html_script,
+            )
+
         except Exception as e:
             result.error = str(e)
         
@@ -397,6 +411,31 @@ Napisz kompletny artykuł w formacie Markdown:"""
         
         return "Artykuł bez tytułu"
     
+    def _build_full_page_html(
+        self,
+        title: str,
+        toc_html: str,
+        body_html: str,
+        schema_script: str,
+    ) -> str:
+        """SERP → artykuł: jedna strona HTML ze spisem treści, treścią i JSON-LD."""
+        safe_title = title.replace("<", "").replace(">", "")[:200]
+        return (
+            "<!DOCTYPE html>\n"
+            '<html lang="pl">\n<head>\n'
+            '<meta charset="utf-8"/>\n'
+            f"<title>{safe_title}</title>\n"
+            '<meta name="viewport" content="width=device-width, initial-scale=1"/>\n'
+            "<style>body{font-family:system-ui,sans-serif;max-width:48rem;margin:2rem auto;line-height:1.5}"
+            ".toc{border:1px solid #ddd;padding:1rem;margin-bottom:2rem;background:#fafafa}</style>\n"
+            "</head>\n<body>\n"
+            f"<h1>{safe_title}</h1>\n"
+            f'<div class="toc">{toc_html}</div>\n'
+            f"<article>{body_html}</article>\n"
+            f"{schema_script}\n"
+            "</body>\n</html>"
+        )
+
     def _extract_description(self, content: str, max_length: int = 160) -> str:
         """Wyciąga opis (meta description) z treści"""
         import re
@@ -456,22 +495,44 @@ Napisz ulepszoną wersję artykułu w formacie Markdown:"""
             user_prompt=prompt,
             temperature=0.5
         )
-        
-        # Aktualizuj artykuł
+
         article.content = response.content
-        article.content_html = self._markdown_to_html(response.content)
         article.word_count = len(response.content.split())
-        
+        toc_data = self.toc_generator.generate(article.content)
+        md_with_anchors = self.toc_generator.add_anchors_to_content(article.content)
+        article_html_anchors = self._markdown_to_html(md_with_anchors)
+        article.content_html = article_html_anchors
+
+        brand_info = self.brand_manager.load()
+        schema_output = self.schema_generator.generate_all(
+            title=article.title,
+            content=article.content,
+            content_html=article.content_html,
+            author=brand_info.name if brand_info.name else "",
+            article_url="",
+            description=self._extract_description(article.content),
+        )
+        primary_kw = article.keywords[0] if article.keywords else article.topic
+        snippet_analysis = self.snippet_optimizer.optimize(article.content, primary_kw)
+
         await self.article_storage.store(article)
-        
+
         result.success = True
         result.article = article
-        result.article_html = article.content_html
-        result.article_markdown = article.content
-        result.usage = {
-            "total_tokens": response.total_tokens
-        }
-        
+        result.article_html = article_html_anchors
+        result.article_markdown = md_with_anchors
+        result.usage = {"total_tokens": response.total_tokens}
+        result.schema_json_ld = schema_output.to_json_ld()
+        result.schema_html_script = schema_output.to_html_script()
+        result.table_of_contents = toc_data
+        result.featured_snippet_suggestions = snippet_analysis
+        result.full_page_html = self._build_full_page_html(
+            title=article.title,
+            toc_html=toc_data.get("html", ""),
+            body_html=article_html_anchors,
+            schema_script=result.schema_html_script,
+        )
+
         return result
 
 

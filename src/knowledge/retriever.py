@@ -7,40 +7,71 @@ Z rozszerzonymi metadanymi (tytuł, kategoria, język)
 
 import os
 from typing import List, Dict, Any, Optional
+
 from dotenv import load_dotenv
 
+from src.knowledge.errors import KnowledgeConfigError, KnowledgeEmbeddingError, KnowledgeFilterError
+from src.utils.logger import setup_logger
+
 load_dotenv()
+
+_retriever_log = setup_logger("ai_council.knowledge")
+
+
+def _validate_metadata_filters(
+    category: Optional[str],
+    source_type: Optional[str],
+) -> None:
+    allowed_categories = set(get_all_categories())
+    if category is not None and category not in allowed_categories:
+        raise KnowledgeFilterError(
+            f"Invalid category {category!r}. Allowed: {sorted(allowed_categories)}"
+        )
+    allowed_source = {"book", "summary", "article", "ogólne"}
+    if source_type is not None and source_type not in allowed_source:
+        raise KnowledgeFilterError(
+            f"Invalid source_type {source_type!r}. Allowed: {sorted(allowed_source)}"
+        )
 
 
 def get_pinecone_index():
     """Zwraca połączony index Pinecone"""
+    key = os.getenv("PINECONE_API_KEY")
+    if not key or key.strip() in ("", "dummy-key", "your_pinecone_key"):
+        raise KnowledgeConfigError("PINECONE_API_KEY is missing or not configured")
     from pinecone import Pinecone
-    
-    pc = Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
+
+    pc = Pinecone(api_key=key)
     index_name = os.getenv("PINECONE_INDEX_NAME", "ebook-library")
-    
+
     return pc.Index(index_name)
 
 
 def get_query_embedding(query: str) -> List[float]:
     """
     Generuje embedding dla zapytania
-    
+
     Args:
         query: Tekst zapytania
-    
+
     Returns:
         Wektor embeddingu
     """
+    key = os.getenv("OPENAI_API_KEY")
+    if not key or key.strip() in ("", "dummy-key"):
+        raise KnowledgeConfigError("OPENAI_API_KEY is missing or not configured for embeddings")
     from openai import OpenAI
-    
-    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-    
-    response = client.embeddings.create(
-        model="text-embedding-3-small",
-        input=query
-    )
-    
+
+    client = OpenAI(api_key=key)
+
+    try:
+        response = client.embeddings.create(
+            model="text-embedding-3-small",
+            input=query[:8000],
+        )
+    except Exception as exc:
+        raise KnowledgeEmbeddingError(f"Embedding request failed: {exc}") from exc
+
     return response.data[0].embedding
 
 
@@ -49,56 +80,78 @@ def query_knowledge(
     top_k: int = 5,
     category: Optional[str] = None,
     source_type: Optional[str] = None,
-    min_score: float = 0.3
+    min_score: float = 0.3,
 ) -> List[Dict[str, Any]]:
     """
     Odpytuje bazę wiedzy i zwraca relevantne fragmenty
-    
+
     Args:
         query: Zapytanie użytkownika
         top_k: Liczba wyników do zwrócenia
         category: Filtr kategorii (marketing, biznes, etc.)
         source_type: Filtr typu źródła (book, summary, article)
         min_score: Minimalny score podobieństwa
-    
+
     Returns:
-        Lista relevantnych fragmentów z metadanymi
+        Lista relevantnych fragmentów z metadanymi (pusta przy błędzie odzyskiwalnym).
     """
-    # Generuj embedding zapytania
-    query_embedding = get_query_embedding(query)
-    
-    # Przygotuj filtr
-    filter_dict = {}
+    if not query or not query.strip():
+        return []
+
+    try:
+        _validate_metadata_filters(category, source_type)
+    except KnowledgeFilterError:
+        raise
+
+    try:
+        query_embedding = get_query_embedding(query)
+    except KnowledgeConfigError as e:
+        _retriever_log.warning("Knowledge base skipped: %s", e)
+        return []
+    except KnowledgeEmbeddingError as e:
+        _retriever_log.error("Embedding error: %s", e)
+        return []
+
+    filter_dict: Dict[str, Any] = {}
     if source_type:
         filter_dict["source_type"] = source_type
     if category:
         filter_dict["category"] = category
-    
-    # Odpytaj Pinecone
-    index = get_pinecone_index()
-    
-    results = index.query(
-        vector=query_embedding,
-        top_k=top_k,
-        include_metadata=True,
-        filter=filter_dict if filter_dict else None
-    )
-    
-    # Przetwórz wyniki z rozszerzonymi metadanymi
+
+    try:
+        index = get_pinecone_index()
+    except KnowledgeConfigError as e:
+        _retriever_log.warning("Pinecone unavailable: %s", e)
+        return []
+
+    try:
+        results = index.query(
+            vector=query_embedding,
+            top_k=top_k,
+            include_metadata=True,
+            filter=filter_dict if filter_dict else None,
+        )
+    except Exception as exc:
+        _retriever_log.error("Pinecone query failed: %s", exc)
+        return []
+
     relevant_chunks = []
     for match in results.matches:
-        if match.score >= min_score:
-            relevant_chunks.append({
-                "text": match.metadata.get("text", ""),
-                "title": match.metadata.get("title", match.metadata.get("filename", "Unknown")),
-                "category": match.metadata.get("category", "ogólne"),
-                "language": match.metadata.get("language", "pl"),
-                "source_type": match.metadata.get("source_type", "book"),
-                "score": match.score,
-                "chunk_index": match.metadata.get("chunk_index", 0),
-                "total_chunks": match.metadata.get("total_chunks", 0)
-            })
-    
+        if match.score is not None and match.score >= min_score:
+            meta = match.metadata or {}
+            relevant_chunks.append(
+                {
+                    "text": meta.get("text", ""),
+                    "title": meta.get("title", meta.get("filename", "Unknown")),
+                    "category": meta.get("category", "ogólne"),
+                    "language": meta.get("language", "pl"),
+                    "source_type": meta.get("source_type", "book"),
+                    "score": match.score,
+                    "chunk_index": meta.get("chunk_index", 0),
+                    "total_chunks": meta.get("total_chunks", 0),
+                }
+            )
+
     return relevant_chunks
 
 
@@ -194,9 +247,16 @@ def search_by_category(category: str, query: str = "", top_k: int = 10) -> List[
 def get_all_categories() -> List[str]:
     """Zwraca listę wszystkich kategorii"""
     return [
-        "marketing", "produktywność", "strategia", "biznes",
-        "psychologia", "rozwój_osobisty", "komunikacja", 
-        "innowacje", "edukacja"
+        "marketing",
+        "produktywność",
+        "strategia",
+        "biznes",
+        "psychologia",
+        "rozwój_osobisty",
+        "komunikacja",
+        "innowacje",
+        "edukacja",
+        "ogólne",
     ]
 
 
