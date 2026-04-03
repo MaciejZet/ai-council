@@ -176,6 +176,13 @@ class TestCache:
         assert key1 == key2  # Same inputs = same key
         assert key1 != key3  # Different inputs = different key
 
+    def test_cache_key_full_attachment_hash(self):
+        """Different attachment bodies must not collide (full SHA-256, not prefix)."""
+        cache = ResponseCache(enabled=False)
+        key_a = cache._generate_cache_key("q", "openai", "gpt-4o", True, "a" * 500)
+        key_b = cache._generate_cache_key("q", "openai", "gpt-4o", True, "a" * 499 + "b")
+        assert key_a != key_b
+
 
 # Test health checker
 from src.utils.health import HealthChecker

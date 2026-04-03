@@ -7,6 +7,7 @@ REST API dla wieloagentowej rady AI
 import asyncio
 import os
 import json
+import time
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 from contextlib import asynccontextmanager
@@ -18,7 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ValidationError
 
 # Import existing modules
-from src.agents.base import agent_registry
+from src.agents.base import agent_registry, AgentResponse
 from src.agents.core_agents import create_core_agents, CORE_AGENT_NAMES, Strategist, Analyst, Practitioner, Expert, Synthesizer
 from src.agents.specialist_agents import create_specialists, get_specialist_info, SPECIALIST_CLASSES
 from src.agents.custom_agents import CustomAgentConfig, CustomAgent, create_custom_agent, get_custom_agent_info
@@ -29,12 +30,23 @@ from src.council.debate import DebateOrchestrator
 from src.council.fast_mode import fast_response
 from src.knowledge.ingest import ingest_pdf, get_ingestion_stats
 from src.knowledge.retriever import get_category_emoji, query_knowledge, format_sources_for_display
-from src.llm_providers import OpenAIProvider, GrokProvider, GeminiProvider, DeepSeekProvider, OpenRouterProvider, AVAILABLE_PROVIDERS, get_provider
+from src.llm_providers import (
+    OpenAIProvider,
+    GrokProvider,
+    GeminiProvider,
+    DeepSeekProvider,
+    OpenRouterProvider,
+    PerplexityProvider,
+    AVAILABLE_PROVIDERS,
+    get_provider,
+)
 from src.custom_api_provider import CustomAPIProvider
 from src.utils.api_keys import APIKeyManager
 from src.utils.validation import QueryRequest as ValidatedQueryRequest, FileUploadValidator
 from src.utils.rate_limit import get_rate_limiter
 from src.utils.logger import setup_logger
+from src.utils.cache import get_cache
+from src.utils.health import get_health_checker
 from src.plugins import get_plugin_manager, PluginResult
 from src.plugins.web_search import TavilySearchPlugin, DuckDuckGoSearchPlugin
 from src.plugins.url_analyzer import URLAnalyzerPlugin
@@ -146,8 +158,13 @@ async def lifespan(app: FastAPI):
     pm.register("converter", UnitConverterPlugin())
     pm.register("random", RandomGeneratorPlugin())
     pm.register("text", TextToolsPlugin())
-    
+
+    cache = get_cache()
+    await cache.connect()
+
     yield
+
+    await cache.disconnect()
 
 app = FastAPI(title="AI Council API", lifespan=lifespan)
 
@@ -206,7 +223,6 @@ async def rate_limit_middleware(request: Request, call_next):
 @app.middleware("http")
 async def logging_middleware(request: Request, call_next):
     """Log all requests"""
-    import time
     start_time = time.time()
 
     logger.info(f"Request: {request.method} {request.url.path}")
@@ -222,8 +238,6 @@ async def logging_middleware(request: Request, call_next):
 # ========== HELPER FUNCTIONS ==========
 def create_llm_provider(provider: str, model: str):
     """Create LLM provider instance based on provider name and model"""
-    from src.llm_providers import DeepSeekProvider, PerplexityProvider
-
     if provider == "openai":
         return OpenAIProvider(model=model)
     elif provider == "grok":
@@ -252,7 +266,6 @@ app.mount("/static", StaticFiles(directory=str(static_path)), name="static")
 @app.get("/health")
 async def health_check():
     """System health check"""
-    from src.utils.health import get_health_checker
     checker = get_health_checker()
     return await checker.check_health()
 
@@ -260,7 +273,6 @@ async def health_check():
 @app.get("/metrics")
 async def get_metrics():
     """Get system metrics"""
-    from src.utils.health import get_health_checker
     checker = get_health_checker()
     return checker.get_metrics()
 
@@ -370,6 +382,39 @@ async def deliberate(request: Request):
     # Get API keys from request state
     api_keys = request.state.api_keys
 
+    # Response cache (identical non-chat requests; Redis optional)
+    if not validated.chat_mode:
+        cache = get_cache()
+        if cache.enabled and not cache.client:
+            await cache.connect()
+        if cache.client:
+            try:
+                cached_raw = await cache.get(
+                    query=validated.query,
+                    provider=validated.provider,
+                    model=validated.model,
+                    use_knowledge_base=validated.use_knowledge_base,
+                    attachment_text=validated.attachment_text or "",
+                )
+                if cached_raw:
+                    return DeliberationResult(
+                        query=cached_raw["query"],
+                        timestamp=cached_raw["timestamp"],
+                        agent_responses=[
+                            AgentResponseData(**a) for a in cached_raw["agent_responses"]
+                        ],
+                        synthesis=(
+                            AgentResponseData(**cached_raw["synthesis"])
+                            if cached_raw.get("synthesis")
+                            else None
+                        ),
+                        sources=[SourceData(**s) for s in cached_raw["sources"]],
+                        total_agents=cached_raw["total_agents"],
+                        usage=UsageData(**cached_raw["usage"]),
+                    )
+            except Exception as e:
+                logger.warning(f"Deliberation cache read skipped: {e}")
+
     # Build full query with attachment
     full_query = validated.query
     if validated.attachment_text:
@@ -405,15 +450,14 @@ async def deliberate(request: Request):
     ]
     synthesizer = Synthesizer(llm)
 
-    # Register agents
-    for agent in agents:
-        agent_registry.register(agent)
-    agent_registry.register(synthesizer)
-
-    # Run deliberation
+    # Run deliberation (pass agents explicitly — no global registry pollution)
     try:
         council = Council(use_knowledge_base=validated.use_knowledge_base)
-        result = await council.deliberate(full_query)
+        result = await council.deliberate(
+            full_query,
+            agents=[*agents, synthesizer],
+            include_synthesis=True,
+        )
         logger.info(f"Deliberation completed: {result.usage.total_tokens} tokens, ${result.usage.total_cost:.4f}")
     except Exception as e:
         logger.error(f"Deliberation failed: {e}", exc_info=True)
@@ -465,7 +509,7 @@ async def deliberate(request: Request):
         total_cost=result.usage.total_cost
     )
 
-    return DeliberationResult(
+    deliberation_response = DeliberationResult(
         query=result.query,
         timestamp=result.timestamp,
         agent_responses=agent_responses,
@@ -474,6 +518,25 @@ async def deliberate(request: Request):
         total_agents=result.total_agents,
         usage=usage
     )
+
+    if not validated.chat_mode:
+        cache = get_cache()
+        if cache.enabled and not cache.client:
+            await cache.connect()
+        if cache.client:
+            try:
+                await cache.set(
+                    query=validated.query,
+                    provider=validated.provider,
+                    model=validated.model,
+                    use_knowledge_base=validated.use_knowledge_base,
+                    response_data=deliberation_response.model_dump(mode="json"),
+                    attachment_text=validated.attachment_text or "",
+                )
+            except Exception as e:
+                logger.warning(f"Deliberation cache write skipped: {e}")
+
+    return deliberation_response
 
 
 @app.post("/api/fast")
@@ -493,25 +556,14 @@ async def fast_deliberate(request: Request):
         logger.error(f"Request parsing error: {e}")
         raise HTTPException(status_code=400, detail="Invalid request format")
 
-    # Get API keys
     api_keys_json = request.state.api_keys
-    api_key_manager = APIKeyManager(api_keys_json)
 
-    # Create provider
     try:
-        llm = create_llm_provider(validated.provider, validated.model)
-
-        # Override API key if provided
-        if validated.provider == "openai":
-            api_key = api_key_manager.get_key("openai")
-            if api_key:
-                from openai import AsyncOpenAI
-                llm.client = AsyncOpenAI(api_key=api_key)
-        elif validated.provider == "gemini":
-            api_key = api_key_manager.get_key("gemini")
-            if api_key:
-                import google.generativeai as genai
-                genai.configure(api_key=api_key)
+        llm = APIKeyManager.create_provider_with_keys(
+            provider_name=validated.provider,
+            model=validated.model,
+            encoded_keys=api_keys_json,
+        )
     except Exception as e:
         logger.error(f"Provider creation failed: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to create LLM provider: {str(e)}")
@@ -520,7 +572,6 @@ async def fast_deliberate(request: Request):
     context = []
     if validated.use_knowledge_base:
         try:
-            from src.knowledge.retriever import query_knowledge
             chunks = query_knowledge(validated.query, top_k=3)
             context = [chunk["text"] for chunk in chunks]
         except Exception as e:
@@ -729,7 +780,6 @@ async def deliberate_stream(request: Request):
                 yield f"data: {json.dumps({'event': 'agent_done', 'agent': agent.name})}\n\n"
 
             # Convert to mock AgentResponse objects for synthesizer
-            from src.agents.base import AgentResponse
             mock_responses = [
                 AgentResponse(
                     agent_name=r['agent_name'],

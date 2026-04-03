@@ -1398,22 +1398,47 @@ function handleAgentStart(agentName, emoji, role) {
     tabContents.appendChild(contentDiv);
 }
 
+let deltaFlushScheduled = false;
+const deltaDirtyAgents = new Set();
+
+function flushDeltaBatch() {
+    deltaFlushScheduled = false;
+    deltaDirtyAgents.forEach((agentName) => {
+        if (!streamingAgentResponses[agentName]) return;
+        const contentEl = document.getElementById(`content-${agentName}`);
+        if (contentEl) {
+            const cursor = contentEl.querySelector('.typing-cursor');
+            if (cursor) cursor.remove();
+            contentEl.innerHTML = formatContent(streamingAgentResponses[agentName].content) + '<span class="typing-cursor"></span>';
+        }
+    });
+    deltaDirtyAgents.clear();
+}
+
+function scheduleDeltaFlush() {
+    if (deltaFlushScheduled) return;
+    deltaFlushScheduled = true;
+    requestAnimationFrame(flushDeltaBatch);
+}
+
 function handleDelta(agentName, token) {
     if (!streamingAgentResponses[agentName]) return;
 
     streamingAgentResponses[agentName].content += token;
-
-    const contentEl = document.getElementById(`content-${agentName}`);
-    if (contentEl) {
-        // Remove cursor, add token, add cursor back
-        const cursor = contentEl.querySelector('.typing-cursor');
-        if (cursor) cursor.remove();
-
-        contentEl.innerHTML = formatContent(streamingAgentResponses[agentName].content) + '<span class="typing-cursor"></span>';
-    }
+    deltaDirtyAgents.add(agentName);
+    scheduleDeltaFlush();
 }
 
 function handleAgentDone(agentName) {
+    deltaDirtyAgents.delete(agentName);
+    // Ensure final text is painted if the last frame batch did not run yet
+    const contentElEarly = document.getElementById(`content-${agentName}`);
+    if (contentElEarly && streamingAgentResponses[agentName]) {
+        const cursorEarly = contentElEarly.querySelector('.typing-cursor');
+        if (cursorEarly) cursorEarly.remove();
+        contentElEarly.innerHTML = formatContent(streamingAgentResponses[agentName].content);
+    }
+
     // Remove typing indicators
     const tab = agentTabs.querySelector(`[data-tab="${agentName}"]`);
     if (tab) {
@@ -1423,10 +1448,6 @@ function handleAgentDone(agentName) {
 
     const contentEl = document.getElementById(`content-${agentName}`);
     if (contentEl) {
-        // Remove cursor
-        const cursor = contentEl.querySelector('.typing-cursor');
-        if (cursor) cursor.remove();
-
         // Update badge
         const badge = contentEl.closest('.agent-card')?.querySelector('.streaming-badge');
         if (badge) {

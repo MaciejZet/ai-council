@@ -155,24 +155,12 @@ class APIKeyManager:
         api_key = APIKeyManager.get_api_key(provider_name, encoded_keys)
         base_url = APIKeyManager.get_base_url(provider_name, encoded_keys)
 
-        # Debug to file
-        with open('debug_api_keys.txt', 'a', encoding='utf-8') as f:
-            f.write(f"\n=== APIKeyManager.create_provider_with_keys ===\n")
-            f.write(f"  provider_name: {provider_name}\n")
-            f.write(f"  model: {model}\n")
-            f.write(f"  base_url: {base_url}\n")
-            f.write(f"  api_key: {'***' if api_key else 'None'}\n")
-            f.write(f"  encoded_keys present: {bool(encoded_keys)}\n")
-            f.write(f"===============================================\n")
-
         # For custom provider, get model from localStorage if not provided
         if provider_name == "custom" and encoded_keys:
             keys = APIKeyManager.decode_api_keys(encoded_keys)
             custom_model = keys.get("custom_model")
             if custom_model:
                 model = custom_model
-                with open('debug_api_keys.txt', 'a', encoding='utf-8') as f:
-                    f.write(f"  Using custom model from localStorage: {model}\n")
 
         # Create provider based on type
         provider_map = {

@@ -14,6 +14,9 @@ from src.agents.base import BaseAgent, AgentResponse, agent_registry
 from src.agents.core_agents import Synthesizer, create_core_agents, CORE_AGENT_NAMES
 from src.knowledge.retriever import query_knowledge, format_context_for_agent, format_sources_for_display
 from src.llm_providers import calculate_cost
+from src.utils.logger import setup_logger
+
+_orchestrator_logger = setup_logger("ai_council.council")
 
 
 @dataclass
@@ -89,7 +92,7 @@ class Council:
             sources = format_sources_for_display(chunks)
             return texts, sources
         except Exception as e:
-            print(f"⚠️ Błąd pobierania kontekstu: {e}")
+            _orchestrator_logger.warning("Błąd pobierania kontekstu z bazy wiedzy: %s", e)
             return [], []
     
     async def deliberate(
@@ -103,11 +106,20 @@ class Council:
         """
         # Inicjalizuj licznik użycia
         usage = UsageStats()
-        
-        # Pobierz agentów
-        if agents is None:
+        self._synthesizer = None
+
+        # Pobierz agentów: jawna lista (bez rejestru) lub z rejestru
+        if agents is not None:
+            working: List[BaseAgent] = []
+            for agent in agents:
+                if isinstance(agent, Synthesizer):
+                    self._synthesizer = agent
+                else:
+                    working.append(agent)
+            agents = working
+        else:
             agents = self._get_agents()
-        
+
         if not agents:
             create_core_agents()
             agents = self._get_agents()

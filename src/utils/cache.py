@@ -6,9 +6,8 @@ Redis-based caching for identical queries to reduce API costs
 
 import hashlib
 import json
+import os
 from typing import Optional, Dict, Any
-from datetime import timedelta
-import asyncio
 
 try:
     import redis.asyncio as redis
@@ -26,13 +25,13 @@ class ResponseCache:
 
     def __init__(
         self,
-        redis_url: str = "redis://localhost:6379",
+        redis_url: Optional[str] = None,
         default_ttl: int = 3600,  # 1 hour
         enabled: bool = True
     ):
+        self.redis_url = redis_url or os.getenv("REDIS_URL", "redis://localhost:6379")
         self.enabled = enabled and REDIS_AVAILABLE
         self.default_ttl = default_ttl
-        self.redis_url = redis_url
         self.client: Optional[redis.Redis] = None
 
         if not REDIS_AVAILABLE and enabled:
@@ -67,12 +66,16 @@ class ResponseCache:
         attachment_text: str = ""
     ) -> str:
         """Generate a unique cache key for the query"""
+        attachment_hash = ""
+        if attachment_text:
+            attachment_hash = hashlib.sha256(attachment_text.encode("utf-8")).hexdigest()
         key_data = {
+            "v": 2,
             "query": query.strip().lower(),
             "provider": provider,
             "model": model,
             "use_kb": use_knowledge_base,
-            "attachment": attachment_text[:100] if attachment_text else "",
+            "attachment_sha256": attachment_hash,
         }
         key_string = json.dumps(key_data, sort_keys=True)
         key_hash = hashlib.sha256(key_string.encode()).hexdigest()

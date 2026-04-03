@@ -199,7 +199,8 @@ class ErrorHandler:
         logger.error(f"API error ({provider}/{model}): {error_type} - {error_message}")
 
         # Map common errors to user-friendly messages
-        if "rate_limit" in error_message.lower() or "429" in error_message:
+        em_lower = error_message.lower()
+        if "rate_limit" in em_lower or "rate limit" in em_lower or "429" in error_message:
             user_message = "Rate limit exceeded. Please try again in a moment."
         elif "authentication" in error_message.lower() or "401" in error_message:
             user_message = "Authentication failed. Please check your API key."
