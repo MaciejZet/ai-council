@@ -118,7 +118,10 @@ function isDeliberateV2Enabled() {
 
 if (typeof window !== 'undefined') {
     window.setDeliberateV2 = (enabled) => setDeliberateV2RuntimeFlag(Boolean(enabled));
-    window.isDeliberateV2Enabled = () => isDeliberateV2Enabled();
+    // Avoid self-recursion in the global scope: in browsers, a global function declaration
+    // also creates a writable `window.<name>` binding. Wrapping it in an arrow and assigning
+    // back to `window.isDeliberateV2Enabled` makes the identifier resolve to itself.
+    window.isDeliberateV2Enabled = isDeliberateV2Enabled;
 }
 
 function getUserSessionToken() {
@@ -2773,16 +2776,83 @@ function loadSessions() {
 }
 
 function saveCurrentSession(query) {
+    const maxLen = 12000;
+    const truncateText = (value, limit = maxLen) => {
+        const s = value == null ? '' : String(value);
+        return s.length > limit ? s.slice(0, limit) + '…' : s;
+    };
+
+    const buildStorableResult = (result) => {
+        if (!result) return null;
+        const synthesis = result.synthesis
+            ? {
+                agent_name: truncateText(result.synthesis.agent_name, 120),
+                role: truncateText(result.synthesis.role, 120),
+                content: truncateText(result.synthesis.content, maxLen),
+                provider_used: truncateText(result.synthesis.provider_used, 200),
+            }
+            : null;
+
+        const agent_responses = Array.isArray(result.agent_responses)
+            ? result.agent_responses.map((r) => ({
+                agent_name: truncateText(r.agent_name, 120),
+                role: truncateText(r.role, 120),
+                content: truncateText(r.content, maxLen),
+                provider_used: truncateText(r.provider_used, 200),
+            }))
+            : [];
+
+        const sources = Array.isArray(result.sources)
+            ? result.sources.map((s) => ({
+                title: truncateText(s.title, 200),
+                category: truncateText(s.category, 80),
+                emoji: truncateText(s.emoji, 10),
+                max_score: typeof s.max_score === 'number' ? s.max_score : 0,
+            }))
+            : [];
+
+        return {
+            query: truncateText(result.query, 4000),
+            timestamp: truncateText(result.timestamp, 64),
+            agent_responses,
+            synthesis,
+            sources,
+            quality_decision: result.quality_decision || null,
+        };
+    };
+
     const session = {
         id: Date.now(),
         title: query.slice(0, 50) + (query.length > 50 ? '...' : ''),
         timestamp: new Date().toISOString(),
         history: [...history],
-        lastResult: lastResult
+        lastResult: buildStorableResult(lastResult),
     };
     sessions.unshift(session);
     sessions = sessions.slice(0, 20);
-    localStorage.setItem('ai_council_sessions', JSON.stringify(sessions));
+    try {
+        localStorage.setItem('ai_council_sessions', JSON.stringify(sessions));
+    } catch (e) {
+        console.warn('Failed to persist sessions, falling back to lightweight save:', e);
+        try {
+            const lightweight = sessions.map((s) => ({
+                id: s.id,
+                title: s.title,
+                timestamp: s.timestamp,
+                history: Array.isArray(s.history) ? s.history.slice(-10).map((h) => ({
+                    query: truncateText(h?.query, 2000),
+                    synthesis: truncateText(h?.synthesis, 6000),
+                    timestamp: truncateText(h?.timestamp, 64),
+                })) : [],
+                lastResult: null,
+            }));
+            localStorage.setItem('ai_council_sessions', JSON.stringify(lightweight));
+            showToast('Sesja zbyt duża do zapisu lokalnego — zapisano wersję uproszczoną.', 'info');
+        } catch (e2) {
+            console.warn('Lightweight session persist failed:', e2);
+            showToast('Nie udało się zapisać sesji lokalnie (localStorage).', 'error');
+        }
+    }
     currentSessionId = session.id;
     renderSessions();
 }
