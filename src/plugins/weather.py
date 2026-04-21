@@ -110,6 +110,12 @@ class WeatherPlugin(BasePlugin):
     
     async def _get_weather(self, lat: float, lon: float, days: int) -> Dict[str, Any]:
         """Pobiera dane pogodowe"""
+        try:
+            requested_days = int(days)
+        except (TypeError, ValueError):
+            requested_days = 3
+        safe_days = max(1, min(requested_days, 7))
+
         async with httpx.AsyncClient(timeout=15.0) as client:
             response = await client.get(
                 self.WEATHER_URL,
@@ -119,7 +125,7 @@ class WeatherPlugin(BasePlugin):
                     "current": "temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m",
                     "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum",
                     "timezone": "Europe/Warsaw",
-                    "forecast_days": min(days, 7)
+                    "forecast_days": safe_days
                 }
             )
             response.raise_for_status()
@@ -137,14 +143,24 @@ class WeatherPlugin(BasePlugin):
             
             # Prognoza
             daily = data.get("daily", {})
+            times = daily.get("time", []) or []
+            temp_max_list = daily.get("temperature_2m_max", []) or []
+            temp_min_list = daily.get("temperature_2m_min", []) or []
+            precipitation_list = daily.get("precipitation_sum", []) or []
+            weather_codes = daily.get("weather_code", []) or []
+
+            def pick(values, idx):
+                return values[idx] if idx < len(values) else None
+
             forecast = []
-            for i in range(len(daily.get("time", []))):
+            for i, forecast_date in enumerate(times):
+                code = pick(weather_codes, i)
                 forecast.append({
-                    "date": daily["time"][i],
-                    "temp_max": daily["temperature_2m_max"][i],
-                    "temp_min": daily["temperature_2m_min"][i],
-                    "precipitation": daily["precipitation_sum"][i],
-                    "description": self.WEATHER_CODES.get(daily["weather_code"][i], "")
+                    "date": forecast_date,
+                    "temp_max": pick(temp_max_list, i),
+                    "temp_min": pick(temp_min_list, i),
+                    "precipitation": pick(precipitation_list, i),
+                    "description": self.WEATHER_CODES.get(code, "")
                 })
             
             return {"current": current_weather, "forecast": forecast}

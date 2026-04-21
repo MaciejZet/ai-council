@@ -5,8 +5,10 @@
     <meta charset="utf-8" />
     <meta content="width=device-width, initial-scale=1.0" name="viewport" />
     <title>AI Council Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-        href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Noto+Sans:wght@300;400;500;600;700&display=swap"
+        href="https://fonts.googleapis.com/css2?family=Public+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Syne:wght@500;600;700;800&display=swap"
         rel="stylesheet" />
     <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap"
         rel="stylesheet" />
@@ -17,17 +19,18 @@
             theme: {
                 extend: {
                     colors: {
-                        "primary": "#3b19e6",
-                        "primary-hover": "#2f14b8",
-                        "background-light": "#f6f6f8",
-                        "background-dark": "#141121",
-                        "surface-dark": "#1e1b29",
-                        "surface-darker": "#121118",
-                        "text-secondary": "#a29db8",
+                        "primary": "#0d9488",
+                        "primary-hover": "#0f766e",
+                        "accent": "#f59e0b",
+                        "background-light": "#f4f6f9",
+                        "background-dark": "#070a0f",
+                        "surface-dark": "#101620",
+                        "surface-darker": "#0a0d12",
+                        "text-secondary": "#8b95a8",
                     },
                     fontFamily: {
-                        "display": ["Space Grotesk", "sans-serif"],
-                        "body": ["Noto Sans", "sans-serif"],
+                        "display": ["Syne", "system-ui", "sans-serif"],
+                        "body": ["Public Sans", "system-ui", "sans-serif"],
                     },
                 },
             },
@@ -37,7 +40,8 @@
 </head>
 
 <body
-    class="bg-background-light dark:bg-background-dark text-slate-900 dark:text-white font-display overflow-hidden h-screen flex">
+    class="bg-background-light dark:bg-background-dark text-slate-900 dark:text-white font-body antialiased overflow-hidden h-screen flex selection:bg-primary/30 selection:text-white">
+    <a class="skip-link" href="#query-input">Przejdź do pola pytania</a>
 
     <!-- LEFT SIDEBAR (Sessions Only) -->
     <aside
@@ -46,53 +50,56 @@
             <!-- Logo -->
             <div class="p-6 flex items-center gap-3">
                 <div
-                    class="w-8 h-8 rounded-lg bg-gradient-to-br from-primary to-purple-600 flex items-center justify-center text-white">
-                    <span class="material-symbols-outlined text-lg">psychology</span>
+                    class="w-9 h-9 rounded-xl bg-gradient-to-br from-primary via-cyan-500 to-teal-700 flex items-center justify-center text-white shadow-lg shadow-primary/25 ring-1 ring-white/10">
+                    <span class="material-symbols-outlined text-lg" aria-hidden="true">psychology</span>
                 </div>
-                <h1 class="text-xl font-bold tracking-tight">AI Council</h1>
+                <div class="min-w-0">
+                    <h1 class="text-lg font-display font-bold tracking-tight leading-tight">AI Council</h1>
+                    <p class="text-[11px] text-text-secondary truncate">Panel narad wieloagentowych</p>
+                </div>
             </div>
 
             <!-- New Session Button -->
             <div class="px-4 mb-4">
-                <button onclick="resetSession(); navigateTo('dashboard')"
-                    class="w-full flex items-center justify-center gap-2 bg-primary hover:bg-primary-hover text-white py-3 px-4 rounded-lg font-medium transition-colors shadow-lg shadow-primary/20 group">
+                <button type="button" onclick="resetSession(); navigateTo('dashboard')"
+                    class="w-full flex items-center justify-center gap-2 bg-primary hover:bg-primary-hover text-white py-3 px-4 rounded-xl font-medium transition-all shadow-lg shadow-primary/25 ring-1 ring-white/10 hover:brightness-110 active:scale-[0.98] group focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-300">
                     <span
-                        class="material-symbols-outlined text-[20px] group-hover:rotate-90 transition-transform">add</span>
+                        class="material-symbols-outlined text-[20px] group-hover:rotate-90 transition-transform duration-300" aria-hidden="true">add</span>
                     <span>Nowa sesja</span>
                 </button>
             </div>
 
             <!-- Modules Menu -->
-            <nav class="flex-1 px-3 overflow-y-auto modules-nav">
-                <p class="px-3 text-xs font-semibold text-text-secondary uppercase tracking-wider mb-2">Moduły</p>
-                <div class="space-y-1 mb-6">
-                    <button onclick="navigateTo('dashboard')"
-                        class="w-full flex items-center gap-3 px-3 py-2 text-sm font-medium rounded-lg transition-colors text-slate-900 dark:text-white bg-slate-100 dark:bg-white/10">
-                        <span class="material-symbols-outlined text-[20px]">dashboard</span>
-                        Narada (Chat)
+            <nav class="flex-1 px-3 overflow-y-auto modules-nav" role="navigation" aria-label="Moduły aplikacji">
+                <p class="px-3 text-[10px] font-semibold text-text-secondary uppercase tracking-[0.14em] mb-2">Moduły</p>
+                <div class="space-y-0.5 mb-6">
+                    <button type="button" data-page="dashboard" onclick="navigateTo('dashboard')"
+                        class="nav-link w-full flex items-center gap-3 px-3 py-2.5 text-sm rounded-xl transition-all text-slate-600 dark:text-text-secondary hover:bg-slate-100 dark:hover:bg-white/5 hover:text-slate-900 dark:hover:text-white">
+                        <span class="material-symbols-outlined text-[20px] shrink-0" aria-hidden="true">dashboard</span>
+                        <span class="text-left">Narada (Chat)</span>
                     </button>
-                    <button onclick="navigateTo('seo')"
-                        class="w-full flex items-center gap-3 px-3 py-2 text-sm font-medium rounded-lg transition-colors text-text-secondary hover:text-slate-900 dark:hover:text-white hover:bg-slate-50 dark:hover:bg-white/5">
-                        <span class="material-symbols-outlined text-[20px]">edit_note</span>
-                        Generator SEO
+                    <button type="button" data-page="seo" onclick="navigateTo('seo')"
+                        class="nav-link w-full flex items-center gap-3 px-3 py-2.5 text-sm rounded-xl transition-all text-slate-600 dark:text-text-secondary hover:bg-slate-100 dark:hover:bg-white/5 hover:text-slate-900 dark:hover:text-white">
+                        <span class="material-symbols-outlined text-[20px] shrink-0" aria-hidden="true">edit_note</span>
+                        <span class="text-left">Generator SEO</span>
                     </button>
-                    <button onclick="navigateTo('agents')"
-                        class="w-full flex items-center gap-3 px-3 py-2 text-sm font-medium rounded-lg transition-colors text-text-secondary hover:text-slate-900 dark:hover:text-white hover:bg-slate-50 dark:hover:bg-white/5">
-                        <span class="material-symbols-outlined text-[20px]">group</span>
-                        Agenci
+                    <button type="button" data-page="agents" onclick="navigateTo('agents')"
+                        class="nav-link w-full flex items-center gap-3 px-3 py-2.5 text-sm rounded-xl transition-all text-slate-600 dark:text-text-secondary hover:bg-slate-100 dark:hover:bg-white/5 hover:text-slate-900 dark:hover:text-white">
+                        <span class="material-symbols-outlined text-[20px] shrink-0" aria-hidden="true">group</span>
+                        <span class="text-left">Agenci</span>
                     </button>
-                    <button onclick="navigateTo('plugins')"
-                        class="w-full flex items-center gap-3 px-3 py-2 text-sm font-medium rounded-lg transition-colors text-text-secondary hover:text-slate-900 dark:hover:text-white hover:bg-slate-50 dark:hover:bg-white/5">
-                        <span class="material-symbols-outlined text-[20px]">extension</span>
-                        Wtyczki
+                    <button type="button" data-page="plugins" onclick="navigateTo('plugins')"
+                        class="nav-link w-full flex items-center gap-3 px-3 py-2.5 text-sm rounded-xl transition-all text-slate-600 dark:text-text-secondary hover:bg-slate-100 dark:hover:bg-white/5 hover:text-slate-900 dark:hover:text-white">
+                        <span class="material-symbols-outlined text-[20px] shrink-0" aria-hidden="true">extension</span>
+                        <span class="text-left">Wtyczki</span>
                     </button>
-                    <button onclick="navigateTo('agent-builder')"
-                        class="w-full flex items-center gap-3 px-3 py-2 text-sm font-medium rounded-lg transition-colors text-text-secondary hover:text-slate-900 dark:hover:text-white hover:bg-slate-50 dark:hover:bg-white/5">
-                        <span class="material-symbols-outlined text-[20px]">build</span>
-                        Kreator
+                    <button type="button" data-page="agent-builder" onclick="navigateTo('agent-builder')"
+                        class="nav-link w-full flex items-center gap-3 px-3 py-2.5 text-sm rounded-xl transition-all text-slate-600 dark:text-text-secondary hover:bg-slate-100 dark:hover:bg-white/5 hover:text-slate-900 dark:hover:text-white">
+                        <span class="material-symbols-outlined text-[20px] shrink-0" aria-hidden="true">build</span>
+                        <span class="text-left">Kreator</span>
                     </button>
                 </div>
-                <p class="px-3 text-xs font-semibold text-text-secondary uppercase tracking-wider mb-2">Sesje</p>
+                <p class="px-3 text-[10px] font-semibold text-text-secondary uppercase tracking-[0.14em] mb-2">Sesje</p>
                 <div id="recent-sessions" class="space-y-0.5">
                     <p class="px-3 text-xs text-text-secondary/50 italic">Brak zapisanych sesji</p>
                 </div>
@@ -102,16 +109,16 @@
             <div class="p-4 border-t border-gray-200 dark:border-white/10">
                 <div class="flex items-center gap-3 p-2">
                     <div
-                        class="w-8 h-8 rounded-full bg-gradient-to-br from-primary to-purple-500 flex items-center justify-center text-white text-sm font-bold">
+                        class="w-8 h-8 rounded-full bg-gradient-to-br from-primary to-cyan-600 flex items-center justify-center text-white text-sm font-bold ring-1 ring-white/10">
                         U</div>
                     <div class="text-left flex-1 min-w-0">
                         <p class="text-sm font-medium text-slate-900 dark:text-white truncate">Użytkownik</p>
                         <p class="text-xs text-text-secondary truncate">AI Council v2.0</p>
                     </div>
-                    <button onclick="openSettingsPanel()"
-                        class="p-2 text-text-secondary hover:text-white hover:bg-white/10 rounded-lg transition-colors"
-                        title="Ustawienia">
-                        <span class="material-symbols-outlined text-[20px]">settings</span>
+                    <button type="button" onclick="openSettingsPanel()"
+                        class="p-2 text-text-secondary hover:text-white hover:bg-white/10 rounded-lg transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+                        title="Ustawienia" aria-label="Otwórz ustawienia">
+                        <span class="material-symbols-outlined text-[20px]" aria-hidden="true">settings</span>
                     </button>
                 </div>
             </div>
@@ -127,14 +134,20 @@
             <header
                 class="h-16 border-b border-gray-200 dark:border-white/10 flex items-center justify-between px-6 shrink-0 bg-white/50 dark:bg-surface-darker/50 backdrop-blur-md sticky top-0 z-10">
                 <div class="flex items-center gap-4">
-                    <button class="md:hidden text-text-secondary hover:text-white" onclick="toggleMobileMenu()">
-                        <span class="material-symbols-outlined">menu</span>
+                    <button type="button" id="mobile-menu-btn" class="md:hidden p-2 -ml-2 rounded-lg text-text-secondary hover:text-white hover:bg-white/10 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary" onclick="toggleMobileMenu()" aria-expanded="false" aria-controls="mobile-nav" aria-label="Otwórz menu nawigacji">
+                        <span class="material-symbols-outlined" aria-hidden="true">menu</span>
                     </button>
                     <div>
-                        <h2 class="text-lg font-bold leading-tight" id="main-title">Narada Rady AI</h2>
-                        <p class="text-xs text-text-secondary flex items-center gap-1">
+                        <h2 class="text-lg font-display font-bold leading-tight tracking-tight" id="main-title">Narada Rady AI</h2>
+                        <p class="text-xs text-text-secondary flex items-center gap-1 flex-wrap">
                             <span class="w-2 h-2 rounded-full bg-green-500"></span>
                             <span id="agents-status">Aktywna • 5 Agentów</span>
+                            <span id="routing-intent-badge"
+                                class="hidden ml-2 px-2 py-0.5 rounded bg-primary/20 text-primary text-[10px] font-medium"
+                                title="Wykryta intencja zapytania (routing)"></span>
+                            <span id="quality-decision-badge"
+                                class="hidden ml-2 px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 text-[10px] font-medium"
+                                title="Informacja o adaptacyjnej decyzji jakości"></span>
                         </p>
                     </div>
                 </div>
@@ -161,7 +174,7 @@
                                 <p id="query-text" class="text-base leading-relaxed font-body"></p>
                             </div>
                             <div
-                                class="w-8 h-8 rounded-full bg-gradient-to-br from-primary to-purple-500 flex items-center justify-center text-white text-sm font-bold mb-1">
+                                class="w-8 h-8 rounded-full bg-gradient-to-br from-primary to-cyan-600 flex items-center justify-center text-white text-sm font-bold mb-1 ring-1 ring-white/10">
                                 U</div>
                         </div>
                         <span class="text-xs text-text-secondary mt-2 pr-12">Teraz</span>
@@ -169,25 +182,20 @@
                 </div>
 
                 <!-- Welcome state -->
-                <div id="welcome-state" class="flex-1 flex items-center justify-center">
+                <div id="welcome-state" class="flex-1 flex items-center justify-center welcome-screen">
                     <div class="text-center px-4 max-w-xl">
                         <div
-                            class="w-16 h-16 rounded-2xl bg-gradient-to-br from-primary to-purple-600 flex items-center justify-center text-white mx-auto mb-6">
-                            <span class="material-symbols-outlined text-3xl">psychology</span>
+                            class="w-16 h-16 rounded-2xl bg-gradient-to-br from-primary via-cyan-500 to-teal-800 flex items-center justify-center text-white mx-auto mb-6 shadow-xl shadow-primary/20 ring-1 ring-white/10 welcome-icon">
+                            <span class="material-symbols-outlined text-3xl" aria-hidden="true">psychology</span>
                         </div>
-                        <h2 class="text-2xl font-bold mb-2">Witaj w AI Council</h2>
-                        <p class="text-text-secondary mb-6">Wieloagentowa rada AI analizuje Twoje pytanie z 5 różnych
-                            perspektyw.</p>
+                        <h2 class="text-2xl sm:text-3xl font-display font-bold mb-2 tracking-tight">Witaj w AI Council</h2>
+                        <p class="text-text-secondary mb-8 text-[15px] leading-relaxed max-w-md mx-auto">Wieloagentowa rada analizuje Twoje pytanie z kilku perspektyw, a synteza scala wnioski w jedną odpowiedź.</p>
                         <div class="flex flex-wrap justify-center gap-2">
-                            <span class="px-3 py-1 bg-blue-500/10 text-blue-400 rounded-full text-sm">🎯 Strateg</span>
-                            <span class="px-3 py-1 bg-green-500/10 text-green-400 rounded-full text-sm">📊
-                                Analityk</span>
-                            <span class="px-3 py-1 bg-orange-500/10 text-orange-400 rounded-full text-sm">🔧
-                                Praktyk</span>
-                            <span class="px-3 py-1 bg-purple-500/10 text-purple-400 rounded-full text-sm">🎓
-                                Ekspert</span>
-                            <span class="px-3 py-1 bg-pink-500/10 text-pink-400 rounded-full text-sm">🔮
-                                Syntezator</span>
+                            <span class="agent-chip px-3 py-1.5 bg-blue-500/10 text-blue-300 border border-blue-500/15 rounded-full text-xs font-medium">🎯 Strateg</span>
+                            <span class="agent-chip px-3 py-1.5 bg-emerald-500/10 text-emerald-300 border border-emerald-500/15 rounded-full text-xs font-medium">📊 Analityk</span>
+                            <span class="agent-chip px-3 py-1.5 bg-orange-500/10 text-orange-300 border border-orange-500/15 rounded-full text-xs font-medium">🔧 Praktyk</span>
+                            <span class="agent-chip px-3 py-1.5 bg-violet-500/10 text-violet-300 border border-violet-500/15 rounded-full text-xs font-medium">🎓 Ekspert</span>
+                            <span class="agent-chip px-3 py-1.5 bg-pink-500/10 text-pink-300 border border-pink-500/15 rounded-full text-xs font-medium">🔮 Syntezator</span>
                         </div>
                     </div>
                 </div>
@@ -212,19 +220,20 @@
 
             <!-- Input Area -->
             <div
-                class="absolute bottom-0 left-0 w-full p-4 bg-gradient-to-t from-background-light via-background-light to-transparent dark:from-background-dark dark:via-background-dark dark:to-transparent pt-10">
+                class="absolute bottom-0 left-0 w-full p-4 bg-gradient-to-t from-background-light via-background-light/95 to-transparent dark:from-background-dark dark:via-background-dark/95 dark:to-transparent pt-12">
                 <div class="max-w-4xl mx-auto">
-                    <form id="query-form" class="relative group/input">
+                    <form id="query-form" class="relative group/input" aria-label="Formularz pytania do rady">
                         <div
-                            class="absolute -inset-0.5 bg-gradient-to-r from-primary/50 to-purple-600/50 rounded-2xl opacity-0 group-focus-within/input:opacity-100 transition duration-500 blur-md">
+                            class="absolute -inset-0.5 bg-gradient-to-r from-primary/40 via-cyan-500/30 to-teal-600/40 rounded-2xl opacity-0 group-focus-within/input:opacity-100 transition duration-500 blur-md pointer-events-none">
                         </div>
                         <div
-                            class="relative bg-white dark:bg-surface-darker rounded-2xl border border-gray-200 dark:border-white/10 shadow-2xl flex flex-col overflow-hidden">
+                            class="relative bg-white dark:bg-surface-darker rounded-2xl border border-gray-200 dark:border-white/10 shadow-2xl shadow-black/20 dark:shadow-black/40 flex flex-col overflow-hidden ring-1 ring-black/5 dark:ring-white/5">
                             <textarea id="query-input"
-                                class="w-full bg-transparent border-none focus:ring-0 text-slate-900 dark:text-white placeholder:text-text-secondary px-4 py-4 min-h-[60px] max-h-[200px] resize-none font-body text-base"
-                                placeholder="Zadaj pytanie radzie AI..." rows="1"></textarea>
-                            <div class="flex items-center justify-between px-2 pb-2">
-                                <div class="flex items-center gap-1">
+                                class="w-full bg-transparent border-none focus:ring-0 text-slate-900 dark:text-white placeholder:text-text-secondary px-4 py-4 min-h-[60px] max-h-[200px] resize-none font-body text-base leading-relaxed"
+                                placeholder="Zadaj pytanie radzie AI… (Enter — wyślij, Shift+Enter — nowa linia)" rows="1" autocomplete="off"></textarea>
+                            <div class="flex flex-col gap-1 px-2 pb-2">
+                                <div class="flex items-center justify-between w-full">
+                                <div class="flex flex-wrap items-center gap-1">
                                     <label
                                         class="p-2 text-text-secondary hover:text-primary hover:bg-primary/10 rounded-lg transition-colors cursor-pointer"
                                         title="Załącz plik">
@@ -241,8 +250,20 @@
                                         <input type="checkbox" id="chat-toggle" class="rounded text-primary">
                                         <span>💬 Chat</span>
                                     </label>
+                                    <label
+                                        class="flex items-center gap-1 px-2 py-1 text-text-secondary hover:text-primary rounded-lg transition-colors cursor-pointer text-xs"
+                                        title="Zapisz wynik narady na serwerze (data/sessions)">
+                                        <input type="checkbox" id="persist-session-toggle" class="rounded text-primary">
+                                        <span>💾 Serwer</span>
+                                    </label>
+                                    <label
+                                        class="flex items-center gap-1 px-2 py-1 text-text-secondary hover:text-primary rounded-lg transition-colors cursor-pointer text-xs"
+                                        title="Użyj wszystkich 4 agentów (wyższy koszt). Wyłączone = automatyczny podzbiór.">
+                                        <input type="checkbox" id="routing-full-toggle" class="rounded text-primary">
+                                        <span>👥 Pełna rada</span>
+                                    </label>
                                 </div>
-                                <div class="flex items-center gap-3">
+                                <div class="flex items-center gap-3 shrink-0">
                                     <span id="file-indicator" class="hidden text-xs text-text-secondary">
                                         <span
                                             class="material-symbols-outlined text-[14px] align-middle">description</span>
@@ -253,6 +274,41 @@
                                         <span class="material-symbols-outlined text-[20px]">send</span>
                                     </button>
                                 </div>
+                                </div>
+                                <details class="query-advanced border-t border-gray-100 dark:border-white/5">
+                                    <summary class="cursor-pointer select-none list-none flex items-center gap-2 px-3 py-2 text-[11px] font-medium text-text-secondary hover:text-slate-700 dark:hover:text-white/90 transition-colors [&::-webkit-details-marker]:hidden">
+                                        <span class="adv-chevron material-symbols-outlined text-[16px] text-primary/80" aria-hidden="true">chevron_right</span>
+                                        <span>Opcje odpowiedzi (preset, krytyk, KB…)</span>
+                                    </summary>
+                                    <div class="flex flex-wrap items-center gap-2 px-3 pb-3 pl-9 text-[11px] text-text-secondary w-full border-t border-transparent">
+                                    <select id="quality-mode-select"
+                                        class="bg-white dark:bg-black/20 border border-gray-200 dark:border-white/10 rounded-lg px-2 py-1.5 max-w-[11rem] text-xs text-slate-800 dark:text-white"
+                                        title="Tryb decyzji jakości odpowiedzi">
+                                        <option value="auto">Jakość: Auto</option>
+                                        <option value="off">Jakość: Off</option>
+                                        <option value="max">Jakość: Max</option>
+                                    </select>
+                                    <select id="behavior-preset-select"
+                                        class="bg-white dark:bg-black/20 border border-gray-200 dark:border-white/10 rounded-lg px-2 py-1.5 max-w-[11rem] text-xs text-slate-800 dark:text-white">
+                                        <option value="default">Preset: domyślny</option>
+                                        <option value="short">Krótko</option>
+                                        <option value="with_sources">Ze źródłami</option>
+                                        <option value="kb_only">Tylko KB</option>
+                                    </select>
+                                    <label class="flex items-center gap-1.5 cursor-pointer rounded-md px-1.5 py-0.5 hover:bg-black/5 dark:hover:bg-white/5" title="Krok redaktora przed syntezą">
+                                        <input type="checkbox" id="critic-toggle" class="rounded text-primary border-gray-300 dark:border-white/20">
+                                        <span>Krytyk</span>
+                                    </label>
+                                    <label class="flex items-center gap-1.5 cursor-pointer rounded-md px-1.5 py-0.5 hover:bg-black/5 dark:hover:bg-white/5" title="Synteza ważona wg ocen LLM">
+                                        <input type="checkbox" id="weighted-toggle" class="rounded text-primary border-gray-300 dark:border-white/20">
+                                        <span>Wagi</span>
+                                    </label>
+                                    <label class="flex items-center gap-1.5 cursor-pointer rounded-md px-1.5 py-0.5 hover:bg-black/5 dark:hover:bg-white/5" title="Hybryda: wektor + słowa kluczowe">
+                                        <input type="checkbox" id="hybrid-kb-toggle" class="rounded text-primary border-gray-300 dark:border-white/20">
+                                        <span>Hybryda KB</span>
+                                    </label>
+                                    </div>
+                                </details>
                             </div>
                         </div>
                     </form>
@@ -630,6 +686,19 @@
                             Ustawienia LLM
                         </h3>
                         <div class="space-y-4">
+                            <!-- API Keys Button -->
+                            <div class="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
+                                <div class="flex items-center justify-between">
+                                    <div>
+                                        <p class="font-medium text-sm">🔑 API Keys</p>
+                                        <p class="text-xs text-text-secondary mt-1">Zarządzaj kluczami API (localStorage)</p>
+                                    </div>
+                                    <button onclick="showAPIKeysModal()"
+                                        class="bg-primary hover:bg-primary-hover text-white px-4 py-2 rounded-lg text-sm font-medium transition">
+                                        Konfiguruj
+                                    </button>
+                                </div>
+                            </div>
                             <div>
                                 <label class="block text-sm text-text-secondary mb-2">Domyślny provider</label>
                                 <select id="setting-default-provider"
@@ -637,6 +706,10 @@
                                     <option value="openai">OpenAI</option>
                                     <option value="grok">Grok (xAI)</option>
                                     <option value="gemini">Google Gemini</option>
+                                    <option value="deepseek">DeepSeek</option>
+                                    <option value="perplexity">Perplexity</option>
+                                    <option value="openrouter">OpenRouter</option>
+                                    <option value="custom">Custom API</option>
                                 </select>
                             </div>
                             <div>
@@ -945,6 +1018,10 @@
                                         class="px-3 py-2 bg-white/10 hover:bg-white/20 rounded-lg text-sm transition-colors">
                                         📋 Schema
                                     </button>
+                                    <button type="button" onclick="downloadSEOFullPage()"
+                                        class="px-3 py-2 bg-primary/20 hover:bg-primary/30 text-primary rounded-lg text-sm transition-colors">
+                                        ⬇ Pełna strona HTML
+                                    </button>
                                 </div>
                             </div>
                             <div id="seo-article-content" class="prose prose-invert max-w-none"></div>
@@ -994,7 +1071,7 @@
     <aside
         class="w-72 bg-white dark:bg-surface-darker border-l border-gray-200 dark:border-white/10 hidden xl:flex flex-col shrink-0">
         <div class="p-6 border-b border-gray-200 dark:border-white/10">
-            <h3 class="font-bold text-lg text-slate-900 dark:text-white">Kontekst Sesji</h3>
+            <h3 class="font-display font-bold text-lg text-slate-900 dark:text-white tracking-tight">Kontekst sesji</h3>
             <p class="text-sm text-text-secondary">Konfiguracja narady</p>
         </div>
         <div class="p-4 space-y-6 overflow-y-auto flex-1">
@@ -1252,26 +1329,27 @@
                 <div id="settings-tab-config" class="settings-tab-content hidden">
                     <h3 class="text-lg font-bold mb-4">⚙️ Konfiguracja Aplikacji</h3>
                     <div class="space-y-6">
-                        <!-- Default Provider -->
-                        <div>
-                            <label class="block text-sm text-text-secondary mb-2">Domyślny dostawca LLM</label>
-                            <select id="setting-default-provider"
-                                class="w-full bg-white dark:bg-black/20 border border-gray-200 dark:border-white/10 rounded-lg px-3 py-2">
-                                <option value="openai">OpenAI</option>
-                                <option value="grok">Grok</option>
-                                <option value="gemini">Gemini</option>
-                                <option value="deepseek">DeepSeek</option>
-                            </select>
+                        <!-- API Keys Button -->
+                        <div class="bg-blue-500/10 border border-blue-500/20 rounded-xl p-4">
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <p class="font-medium text-blue-400 mb-1">🔑 Klucze API</p>
+                                    <p class="text-sm text-text-secondary">Skonfiguruj klucze API dla różnych providerów</p>
+                                </div>
+                                <button onclick="showAPIKeysModal()"
+                                    class="px-4 py-2 bg-primary hover:bg-primary-hover text-white rounded-lg text-sm font-medium transition-colors">
+                                    Zarządzaj
+                                </button>
+                            </div>
                         </div>
-                        <!-- Default Model -->
-                        <div>
-                            <label class="block text-sm text-text-secondary mb-2">Domyślny model</label>
-                            <select id="setting-default-model"
-                                class="w-full bg-white dark:bg-black/20 border border-gray-200 dark:border-white/10 rounded-lg px-3 py-2">
-                                <option value="gpt-4o">gpt-4o</option>
-                                <option value="gpt-4o-mini">gpt-4o-mini</option>
-                            </select>
+
+                        <!-- Info about provider selection -->
+                        <div class="bg-white/5 border border-white/10 rounded-xl p-4">
+                            <p class="text-sm text-text-secondary">
+                                💡 <strong>Wybór providera i modelu:</strong> Użyj dropdown w górnym menu (obok tytułu strony) aby wybrać providera i model dla bieżącej sesji.
+                            </p>
                         </div>
+
                         <!-- Temperature -->
                         <div>
                             <label class="block text-sm text-text-secondary mb-2">Temperatura: <span
@@ -1321,6 +1399,67 @@
         </div>
     </div>
 
+    <!-- Mobile drawer (md:hidden) -->
+    <div id="mobile-nav" class="hidden fixed inset-0 z-[70] md:hidden" role="dialog" aria-modal="true"
+        aria-label="Menu nawigacji">
+        <div class="absolute inset-0 bg-black/55 backdrop-blur-sm motion-safe:transition-opacity"
+            onclick="toggleMobileMenu()" aria-hidden="true"></div>
+        <aside id="mobile-nav-panel"
+            class="absolute left-0 top-0 h-full w-[min(20rem,90vw)] bg-white dark:bg-surface-darker border-r border-gray-200 dark:border-white/10 flex flex-col shadow-2xl">
+            <div class="p-4 flex items-center justify-between border-b border-gray-200 dark:border-white/10">
+                <div class="flex items-center gap-2 min-w-0">
+                    <div
+                        class="w-9 h-9 rounded-xl bg-gradient-to-br from-primary via-cyan-500 to-teal-700 flex items-center justify-center text-white shrink-0 shadow-lg shadow-primary/20 ring-1 ring-white/10">
+                        <span class="material-symbols-outlined text-lg" aria-hidden="true">psychology</span>
+                    </div>
+                    <span class="font-display font-bold truncate">AI Council</span>
+                </div>
+                <button type="button" onclick="toggleMobileMenu()"
+                    class="p-2 rounded-lg text-text-secondary hover:bg-black/5 dark:hover:bg-white/10 hover:text-slate-900 dark:hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+                    aria-label="Zamknij menu">
+                    <span class="material-symbols-outlined" aria-hidden="true">close</span>
+                </button>
+            </div>
+            <nav class="flex-1 overflow-y-auto p-3 space-y-1" role="navigation" aria-label="Moduły">
+                <button type="button" data-page="dashboard" onclick="navigateTo('dashboard')"
+                    class="nav-link w-full flex items-center gap-3 px-3 py-2.5 text-sm rounded-xl transition-all text-slate-600 dark:text-text-secondary hover:bg-slate-100 dark:hover:bg-white/5">
+                    <span class="material-symbols-outlined text-[20px] shrink-0" aria-hidden="true">dashboard</span>
+                    Narada (Chat)
+                </button>
+                <button type="button" data-page="seo" onclick="navigateTo('seo')"
+                    class="nav-link w-full flex items-center gap-3 px-3 py-2.5 text-sm rounded-xl transition-all text-slate-600 dark:text-text-secondary hover:bg-slate-100 dark:hover:bg-white/5">
+                    <span class="material-symbols-outlined text-[20px] shrink-0" aria-hidden="true">edit_note</span>
+                    Generator SEO
+                </button>
+                <button type="button" data-page="agents" onclick="navigateTo('agents')"
+                    class="nav-link w-full flex items-center gap-3 px-3 py-2.5 text-sm rounded-xl transition-all text-slate-600 dark:text-text-secondary hover:bg-slate-100 dark:hover:bg-white/5">
+                    <span class="material-symbols-outlined text-[20px] shrink-0" aria-hidden="true">group</span>
+                    Agenci
+                </button>
+                <button type="button" data-page="plugins" onclick="navigateTo('plugins')"
+                    class="nav-link w-full flex items-center gap-3 px-3 py-2.5 text-sm rounded-xl transition-all text-slate-600 dark:text-text-secondary hover:bg-slate-100 dark:hover:bg-white/5">
+                    <span class="material-symbols-outlined text-[20px] shrink-0" aria-hidden="true">extension</span>
+                    Wtyczki
+                </button>
+                <button type="button" data-page="agent-builder" onclick="navigateTo('agent-builder')"
+                    class="nav-link w-full flex items-center gap-3 px-3 py-2.5 text-sm rounded-xl transition-all text-slate-600 dark:text-text-secondary hover:bg-slate-100 dark:hover:bg-white/5">
+                    <span class="material-symbols-outlined text-[20px] shrink-0" aria-hidden="true">build</span>
+                    Kreator
+                </button>
+            </nav>
+            <div class="p-3 border-t border-gray-200 dark:border-white/10">
+                <button type="button" onclick="closeMobileNav(); openSettingsPanel();"
+                    class="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border border-gray-200 dark:border-white/10 text-sm font-medium hover:bg-slate-50 dark:hover:bg-white/5 transition-colors">
+                    <span class="material-symbols-outlined text-[20px]" aria-hidden="true">settings</span>
+                    Ustawienia
+                </button>
+            </div>
+        </aside>
+    </div>
+
+    <script src="/static/js/api-keys.js"></script>
+    <script src="/static/js/error-recovery.js"></script>
+    <script src="/static/js/api-wrapper.js"></script>
     <script src="/static/js/app.js"></script>
 </body>
 

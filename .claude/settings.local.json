@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python:*)",
+      "Read(//tmp/**)",
+      "Bash(wc -l src/**/*.py)",
+      "Bash(python3:*)",
+      "Bash(uv:*)",
+      "Bash(chmod +x:*)",
+      "Bash(find src:*)",
+      "Bash(curl:*)",
+      "Bash(kill 1384)",
+      "Bash(grep:*)",
+      "Bash(dir *.env)",
+      "Bash(ls -lh *.md *.py start.*)",
+      "Bash(ls -lh *.md *.py *.bat *.sh *.txt)",
+      "Bash(cp /tmp/analysis.md /d/DEV/ai-council/TESTING_AND_QUALITY_ANALYSIS.md)",
+      "Bash(find:*)",
+      "Bash(cat ~/.claude/plans/*.md)"
+    ]
+  }
+}

@@ -30,10 +30,163 @@ let MODELS = {
 
 let AVAILABLE_PROVIDERS_LIST = ['openai', 'grok', 'gemini', 'deepseek', 'openrouter'];
 
+/** OpenRouter: [{ id, tier }, …] z /api/providers — do zakładek Free / Tanie / … */
+let OPENROUTER_CATALOG = [];
+
 const TOKEN_COSTS = {
     'gpt-4o': 0.005, 'gpt-4o-mini': 0.00015, 'gpt-4.1': 0.002, 'gpt-5': 0.01,
     'grok-2': 0.002, 'gemini-1.5-pro': 0.00125
 };
+
+const SERVER_SESSION_ID_KEY = 'ai_council_server_session_id';
+const USER_SESSION_KEY = 'ai_council_user_session_token';
+const USE_DELIBERATE_V2 = false;
+const DELIBERATE_V2_STORAGE_KEY = 'ai_council_use_deliberate_v2';
+const DELIBERATE_V2_QUERY_PARAM = 'deliberate_v2';
+
+function parseRuntimeBooleanFlag(value) {
+    if (typeof value !== 'string') return null;
+    const normalized = value.trim().toLowerCase();
+    if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+    if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
+    return null;
+}
+
+function setDeliberateV2RuntimeFlag(enabled) {
+    try {
+        localStorage.setItem(DELIBERATE_V2_STORAGE_KEY, enabled ? '1' : '0');
+    } catch {
+        /* ignore */
+    }
+}
+
+function applyDeliberateV2QueryOverride() {
+    try {
+        const params = new URLSearchParams(window.location.search);
+        const queryFlag = parseRuntimeBooleanFlag(params.get(DELIBERATE_V2_QUERY_PARAM));
+        if (queryFlag !== null) {
+            setDeliberateV2RuntimeFlag(queryFlag);
+        }
+    } catch {
+        /* ignore */
+    }
+}
+
+function isDeliberateV2Enabled() {
+    applyDeliberateV2QueryOverride();
+
+    try {
+        const storedFlag = parseRuntimeBooleanFlag(localStorage.getItem(DELIBERATE_V2_STORAGE_KEY));
+        if (storedFlag !== null) return storedFlag;
+    } catch {
+        /* ignore */
+    }
+
+    return USE_DELIBERATE_V2;
+}
+
+if (typeof window !== 'undefined') {
+    window.setDeliberateV2 = (enabled) => setDeliberateV2RuntimeFlag(Boolean(enabled));
+    window.isDeliberateV2Enabled = () => isDeliberateV2Enabled();
+}
+
+function getUserSessionToken() {
+    try {
+        return localStorage.getItem(USER_SESSION_KEY) || null;
+    } catch {
+        return null;
+    }
+}
+
+function setUserSessionToken(token) {
+    try {
+        if (token) localStorage.setItem(USER_SESSION_KEY, token);
+        else localStorage.removeItem(USER_SESSION_KEY);
+    } catch { /* ignore */ }
+}
+
+async function ensureUserSession() {
+    if (getUserSessionToken()) return;
+    try {
+        const r = await fetch('/api/user/bootstrap', { method: 'POST' });
+        if (!r.ok) return;
+        const d = await r.json();
+        if (d.session_token) setUserSessionToken(d.session_token);
+    } catch {
+        /* ignore */
+    }
+}
+
+function getStoredServerSessionId() {
+    try {
+        return localStorage.getItem(SERVER_SESSION_ID_KEY) || null;
+    } catch {
+        return null;
+    }
+}
+
+function setStoredServerSessionId(id) {
+    try {
+        if (id) localStorage.setItem(SERVER_SESSION_ID_KEY, id);
+        else localStorage.removeItem(SERVER_SESSION_ID_KEY);
+    } catch { /* ignore */ }
+}
+
+function needsQualityDeliberationPath() {
+    const qualityMode = document.getElementById('quality-mode-select')?.value || 'auto';
+    if (qualityMode === 'auto' || qualityMode === 'max') return true;
+    const p = document.getElementById('behavior-preset-select');
+    const preset = p ? p.value : 'default';
+    const critic = document.getElementById('critic-toggle')?.checked ?? false;
+    const weighted = document.getElementById('weighted-toggle')?.checked ?? false;
+    const hybrid = document.getElementById('hybrid-kb-toggle')?.checked ?? false;
+    return preset !== 'default' || critic || weighted || hybrid;
+}
+
+function buildDeliberateRequestExtras() {
+    const fullEl = document.getElementById('routing-full-toggle');
+    const persistEl = document.getElementById('persist-session-toggle');
+    const routing_mode = fullEl && fullEl.checked ? 'full' : 'auto';
+    const persist_session = persistEl ? persistEl.checked : false;
+    const sid = getStoredServerSessionId();
+    const presetEl = document.getElementById('behavior-preset-select');
+    const behavior_preset = presetEl ? presetEl.value : 'default';
+    const quality_mode = document.getElementById('quality-mode-select')?.value || 'auto';
+    const enable_critic = document.getElementById('critic-toggle')?.checked ?? false;
+    const enable_weighted_voting = document.getElementById('weighted-toggle')?.checked ?? false;
+    const hybrid_search = document.getElementById('hybrid-kb-toggle')?.checked ?? false;
+    return {
+        routing_mode,
+        persist_session,
+        quality_mode,
+        behavior_preset,
+        enable_critic,
+        enable_weighted_voting,
+        hybrid_search,
+        ...(sid ? { session_id: sid } : {}),
+    };
+}
+
+function showRoutingIntentBadge(intent, reason) {
+    const el = document.getElementById('routing-intent-badge');
+    if (!el) return;
+    if (!intent) {
+        el.classList.add('hidden');
+        el.textContent = '';
+        return;
+    }
+    const shortReason = reason ? `${reason.slice(0, 72)}${reason.length > 72 ? '…' : ''}` : '';
+    el.textContent = shortReason ? `Routing: ${intent} — ${shortReason}` : `Routing: ${intent}`;
+    el.classList.remove('hidden');
+}
+
+function hideRoutingIntentBadge() {
+    const el = document.getElementById('routing-intent-badge');
+    if (el) {
+        el.classList.add('hidden');
+        el.textContent = '';
+    }
+}
 
 const AGENT_COLORS = {
     // Core agents
@@ -85,6 +238,11 @@ class CustomSelect {
         this.icon = icon;
         this.align = align;
         this.isOpen = false;
+        /** OpenRouter: zakładki wg tier z API */
+        this._orTabsEnabled = false;
+        this._orTierById = new Map();
+        this._orActiveTier = 'all';
+        this._orTabsDelegateBound = false;
 
         this.init();
     }
@@ -137,14 +295,131 @@ class CustomSelect {
 
     setOptions(newOptions) {
         this.options = newOptions;
-        this.renderOptions(this.container.querySelector('.select-options-content'));
+        this._refreshDropdownList();
 
         // Check if current value exists in new options
         const allValues = this.getAllValues();
         if (!allValues.includes(this.value) && allValues.length > 0) {
-            this.setValue(allValues[0]);
+            // false: unikaj onChange → updateModels / setOptions w pętli (Maximum call stack)
+            this.setValue(allValues[0], false);
         }
         this.updateTrigger();
+    }
+
+    /**
+     * Włącza zakładki Free / Tanie / Standard / Premium dla listy modeli OpenRouter.
+     * Wywołaj po setOptions, gdy provider === openrouter.
+     */
+    configureOpenRouterTabs(enabled, catalog) {
+        this._orTabsEnabled = Boolean(enabled && catalog && catalog.length > 0);
+        this._orTierById = new Map();
+        if (catalog && catalog.length) {
+            for (const row of catalog) {
+                if (row && row.id) {
+                    this._orTierById.set(row.id, row.tier || 'standard');
+                }
+            }
+        }
+        this._orActiveTier = 'all';
+    }
+
+    _filteredOptionsForOpenRouterTier() {
+        if (!this._orTabsEnabled || this._orActiveTier === 'all') {
+            return null;
+        }
+        return this.options.filter(
+            (o) => (this._orTierById.get(o.value) || 'standard') === this._orActiveTier
+        );
+    }
+
+    _refreshDropdownList() {
+        const content = this.container?.querySelector('.select-options-content');
+        const tabsRoot = this.container?.querySelector('.openrouter-model-tabs');
+        if (!content) return;
+
+        if (!this._orTabsEnabled) {
+            if (tabsRoot) {
+                tabsRoot.classList.add('hidden');
+                tabsRoot.innerHTML = '';
+            }
+            content.classList.remove('max-h-[320px]');
+            content.classList.add('max-h-[400px]');
+            this.renderOptions(content, null);
+            return;
+        }
+
+        if (tabsRoot) {
+            tabsRoot.classList.remove('hidden');
+            content.classList.remove('max-h-[400px]');
+            content.classList.add('max-h-[320px]');
+            this._mountOpenRouterTabs(tabsRoot);
+        }
+        this.renderOptions(content, this._filteredOptionsForOpenRouterTier());
+    }
+
+    _orTabButtonClass(active) {
+        return `or-tab-btn rounded-md px-2 py-1 text-xs font-medium transition-colors whitespace-nowrap ${
+            active ? 'bg-primary/25 text-white' : 'text-text-secondary hover:bg-white/10 hover:text-white'
+        }`;
+    }
+
+    _syncOpenRouterTabButtonStyles(tabsRoot) {
+        tabsRoot.querySelectorAll('button.or-tab-btn[data-or-tier]').forEach((btn) => {
+            const t = btn.getAttribute('data-or-tier');
+            btn.className = this._orTabButtonClass(t === this._orActiveTier);
+        });
+    }
+
+    _mountOpenRouterTabs(tabsRoot) {
+        const tierOrder = ['all', 'free', 'cheap', 'standard', 'premium'];
+        const labels = {
+            all: 'Wszystkie',
+            free: 'Darmowe',
+            cheap: 'Tanie',
+            standard: 'Standard',
+            premium: 'Premium'
+        };
+        const countInTier = (t) => {
+            if (t === 'all') return this.options.length;
+            return this.options.filter(
+                (o) => (this._orTierById.get(o.value) || 'standard') === t
+            ).length;
+        };
+
+        tabsRoot.innerHTML = '';
+        const wrap = document.createElement('div');
+        wrap.className = 'flex flex-wrap gap-1 p-1.5';
+
+        for (const t of tierOrder) {
+            const n = countInTier(t);
+            if (t !== 'all' && n === 0) continue;
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = this._orTabButtonClass(this._orActiveTier === t);
+            btn.dataset.orTier = t;
+            btn.textContent = `${labels[t]} (${n})`;
+            wrap.appendChild(btn);
+        }
+        tabsRoot.appendChild(wrap);
+
+        if (!this._orTabsDelegateBound) {
+            this._orTabsDelegateBound = true;
+            tabsRoot.addEventListener('click', (e) => {
+                const btn = e.target && e.target.closest && e.target.closest('button.or-tab-btn[data-or-tier]');
+                if (!btn || !tabsRoot.contains(btn)) return;
+                e.preventDefault();
+                e.stopPropagation();
+                const t = btn.getAttribute('data-or-tier');
+                if (!t || t === this._orActiveTier) return;
+                this._orActiveTier = t;
+                this._syncOpenRouterTabButtonStyles(tabsRoot);
+                const content = this.container.querySelector('.select-options-content');
+                if (content) {
+                    content.scrollTop = 0;
+                    this.renderOptions(content, this._filteredOptionsForOpenRouterTier());
+                }
+            });
+        }
     }
 
     getAllValues() {
@@ -179,13 +454,14 @@ class CustomSelect {
                 <span class="value-display flex items-center gap-2 truncate"></span>
                 <span class="material-symbols-outlined text-lg opacity-50">expand_more</span>
             </button>
-            <div class="select-options hidden absolute top-full ${alignClass} min-w-full w-auto mt-1 bg-[#1a1f2e] border border-white/10 rounded-lg shadow-xl z-50 overflow-hidden backdrop-blur-xl animate-in fade-in zoom-in-95 duration-100">
-                <div class="select-options-content max-h-[400px] overflow-y-auto p-1 text-sm"></div>
+            <div class="select-options hidden absolute top-full ${alignClass} min-w-full w-auto mt-1 bg-[#1a1f2e] border border-white/10 rounded-lg shadow-xl z-50 overflow-hidden backdrop-blur-xl animate-in fade-in zoom-in-95 duration-100 flex flex-col">
+                <div class="openrouter-model-tabs hidden shrink-0 border-b border-white/10 bg-black/20"></div>
+                <div class="select-options-content max-h-[400px] overflow-y-auto p-1 text-sm min-h-0"></div>
             </div>
         `;
 
         this.updateTrigger();
-        this.renderOptions(this.container.querySelector('.select-options-content'));
+        this.renderOptions(this.container.querySelector('.select-options-content'), null);
 
         this.container.querySelector('.select-trigger').addEventListener('click', (e) => {
             e.preventDefault();
@@ -199,10 +475,19 @@ class CustomSelect {
         display.innerHTML = this.renderLabel(option);
     }
 
-    renderOptions(container) {
+    renderOptions(container, optionsSubset) {
         container.innerHTML = '';
+        const source = optionsSubset != null ? optionsSubset : this.options;
 
-        this.options.forEach(opt => {
+        if (source.length === 0) {
+            const empty = document.createElement('div');
+            empty.className = 'px-2 py-6 text-center text-xs text-text-secondary opacity-80';
+            empty.textContent = 'Brak modeli w tej kategorii.';
+            container.appendChild(empty);
+            return;
+        }
+
+        source.forEach(opt => {
             if (opt.group) {
                 const groupDiv = document.createElement('div');
                 groupDiv.className = 'py-1';
@@ -235,6 +520,7 @@ let modeSelectInstance, providerSelectInstance, modelSelectInstance;
 
 // ========== INITIALIZATION ==========
 document.addEventListener('DOMContentLoaded', () => {
+    ensureUserSession();
     loadSettings();
     loadStats();
     loadAgents();
@@ -260,6 +546,11 @@ async function fetchProviders() {
         }
         if (data.models) {
             MODELS = data.models;
+        }
+        if (Array.isArray(data.openrouter_catalog)) {
+            OPENROUTER_CATALOG = data.openrouter_catalog;
+        } else {
+            OPENROUTER_CATALOG = [];
         }
     } catch (e) {
         console.error("Failed to fetch providers", e);
@@ -296,10 +587,20 @@ function initCustomSelects() {
     });
 
     // 2. PROVIDER SELECT
+    const providerEmojis = {
+        'openai': '🤖',
+        'grok': '🚀',
+        'gemini': '💎',
+        'deepseek': '🧠',
+        'openrouter': '🌐',
+        'perplexity': '🔍',
+        'custom': '🔌'
+    };
+
     const providerOptions = AVAILABLE_PROVIDERS_LIST.map(p => ({
         value: p,
         label: p.charAt(0).toUpperCase() + p.slice(1),
-        emoji: p === 'openai' ? '🤖' : (p === 'grok' ? '🚀' : (p === 'gemini' ? '💎' : (p === 'deepseek' ? '🧠' : (p === 'openrouter' ? '🌐' : (p === 'perplexity' ? '🔍' : '🔌')))))
+        emoji: providerEmojis[p] || '🔌'
     }));
 
     providerSelectInstance = new CustomSelect({
@@ -366,11 +667,76 @@ function setupEventListeners() {
             document.getElementById('temp-value').textContent = (e.target.value / 100).toFixed(1);
         });
     }
+
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') closeMobileNav();
+    });
+
+    window.addEventListener('resize', () => {
+        if (window.innerWidth >= 768) closeMobileNav();
+    });
 }
 
 // ========== NAVIGATION ==========
+function closeMobileNav() {
+    const panel = document.getElementById('mobile-nav');
+    const btn = document.getElementById('mobile-menu-btn');
+    if (panel && !panel.classList.contains('hidden')) {
+        panel.classList.add('hidden');
+    }
+    document.body.classList.remove('mobile-nav-open');
+    if (btn) btn.setAttribute('aria-expanded', 'false');
+}
+
+function toggleMobileMenu() {
+    const panel = document.getElementById('mobile-nav');
+    const btn = document.getElementById('mobile-menu-btn');
+    if (!panel) return;
+    const opening = panel.classList.contains('hidden');
+    if (opening) {
+        panel.classList.remove('hidden');
+        document.body.classList.add('mobile-nav-open');
+        if (btn) btn.setAttribute('aria-expanded', 'true');
+    } else {
+        closeMobileNav();
+    }
+}
+
+function showQualityDecisionBadge(decision) {
+    const el = document.getElementById('quality-decision-badge');
+    if (!el) return;
+    if (!decision || !decision.mode) {
+        hideQualityDecisionBadge();
+        return;
+    }
+
+    const reason = (decision.reason || '').trim();
+    const shortReason = reason ? `${reason.slice(0, 72)}${reason.length > 72 ? '...' : ''}` : '';
+    const applied = Boolean(decision.applied_critic || decision.applied_weighted_voting);
+    if (decision.mode === 'auto' && applied) {
+        el.textContent = shortReason ? `Quality Auto Applied: ${shortReason}` : 'Quality Auto Applied';
+        el.classList.remove('hidden');
+        return;
+    }
+    if (decision.mode === 'max') {
+        el.textContent = 'Quality Max Applied';
+        el.classList.remove('hidden');
+        return;
+    }
+    hideQualityDecisionBadge();
+}
+
+function hideQualityDecisionBadge() {
+    const el = document.getElementById('quality-decision-badge');
+    if (el) {
+        el.classList.add('hidden');
+        el.textContent = '';
+    }
+}
+
 function navigateTo(page) {
     currentPage = page;
+    closeMobileNav();
 
     // Hide all pages
     document.querySelectorAll('.page-content').forEach(p => p.classList.add('hidden'));
@@ -382,10 +748,12 @@ function navigateTo(page) {
     // Update nav links
     document.querySelectorAll('.nav-link').forEach(link => {
         const isActive = link.dataset.page === page;
+        if (isActive) link.setAttribute('aria-current', 'page');
+        else link.removeAttribute('aria-current');
         link.classList.toggle('bg-primary/10', isActive);
         link.classList.toggle('text-primary', isActive);
         link.classList.toggle('dark:text-white', isActive);
-        link.classList.toggle('font-medium', isActive);
+        link.classList.toggle('font-semibold', isActive);
         link.classList.toggle('text-slate-600', !isActive);
         link.classList.toggle('dark:text-text-secondary', !isActive);
         link.classList.toggle('hover:bg-slate-100', !isActive);
@@ -664,6 +1032,7 @@ function togglePasswordVisibility(inputId) {
 let currentSettingsTab = 'dashboard';
 
 function openSettingsPanel() {
+    closeMobileNav();
     const panel = document.getElementById('settings-panel');
     if (panel) {
         panel.classList.remove('hidden');
@@ -837,15 +1206,29 @@ async function handleSettingsPdfImport(e) {
 
 // ========== MODEL FUNCTIONS ==========
 function updateModels() {
-    const models = MODELS[currentProvider] || [];
+    let models = MODELS[currentProvider] || [];
+
+    // For custom provider, use model from localStorage
+    if (currentProvider === 'custom') {
+        const customModel = apiKeyManager.getKey('custom_model') || 'local-model';
+        models = [customModel];
+        console.log(`Custom provider selected, model: ${customModel}`);
+    }
 
     if (modelSelectInstance) {
         const options = models.map(m => ({ value: m, label: m }));
+        modelSelectInstance.configureOpenRouterTabs(
+            currentProvider === 'openrouter',
+            OPENROUTER_CATALOG
+        );
         modelSelectInstance.setOptions(options);
 
-        if (!models.includes(currentModel)) {
+        // Always set to first model when switching providers
+        if (models.length > 0) {
             currentModel = models[0];
             modelSelectInstance.setValue(currentModel, false); // Don't trigger change callback to avoid loop
+            localStorage.setItem('ai_council_last_model', currentModel);
+            console.log(`Model updated to: ${currentModel}`);
         }
     }
 }
@@ -903,6 +1286,9 @@ async function handleSubmit(e) {
     const query = queryInput.value.trim();
     if (!query) return;
 
+    hideRoutingIntentBadge();
+    hideQualityDecisionBadge();
+
     // Cancel any existing stream
     if (streamingEventSource) {
         streamingEventSource.close();
@@ -921,7 +1307,35 @@ async function handleSubmit(e) {
         mentorsStream(query);
     } else if (currentMode === 'debate') {
         debateStream(query);
+    } else if (currentMode === 'council' && needsQualityDeliberationPath()) {
+        showLoading();
+        try {
+            const payload = await deliberate(query);
+            lastResult = {
+                query: payload.query,
+                timestamp: payload.timestamp,
+                agent_responses: payload.agent_responses || [],
+                synthesis: payload.synthesis || null,
+                sources: payload.sources || [],
+                quality_decision: payload.quality_decision || null,
+            };
+            if (payload.session_id) setStoredServerSessionId(payload.session_id);
+            if (payload.routing_intent) showRoutingIntentBadge(payload.routing_intent, '');
+            renderResults(lastResult);
+            history.push({
+                query: payload.query,
+                synthesis: payload.synthesis?.content || '',
+                timestamp: payload.timestamp,
+            });
+            showExportButton();
+            showToast('Narada zakończona', 'success');
+        } catch (err) {
+            console.error(err);
+            showToast(err.message || 'Błąd narady', 'error');
+            showWelcome();
+        }
     } else {
+        hideQualityDecisionBadge();
         deliberateStream(query);
     }
 
@@ -1224,70 +1638,86 @@ function handleMentorsComplete(totalAgents) {
 }
 
 function deliberateStream(query) {
-    const params = new URLSearchParams({
-        query: query,
-        provider: currentProvider,
-        model: currentModel,
-        use_knowledge_base: kbToggle?.checked ?? true
-    });
-
     // Reset streaming state
     streamingAgentResponses = {};
 
     // Show streaming UI
     showStreamingUI();
 
-    streamingEventSource = new EventSource(`/api/deliberate/stream?${params}`);
+    // Use streamWithFetch instead of EventSource (supports custom headers)
+    const requestData = {
+        query: query,
+        provider: currentProvider,
+        model: currentModel,
+        use_knowledge_base: kbToggle?.checked ?? true,
+        ...buildDeliberateRequestExtras(),
+    };
 
-    streamingEventSource.onmessage = (event) => {
-        const data = JSON.parse(event.data);
+    streamWithFetch(
+        '/api/deliberate/stream',
+        requestData,
+        // onEvent
+        (data) => {
+            switch (data.event) {
+                case 'routing':
+                    showRoutingIntentBadge(data.intent, data.reason || '');
+                    break;
 
-        switch (data.event) {
-            case 'sources':
-                handleSources(data.sources);
-                break;
+                case 'sources':
+                    handleSources(data.sources);
+                    break;
 
-            case 'agent_start':
-                handleAgentStart(data.agent, data.emoji, data.role);
-                break;
+                case 'agent_start':
+                    handleAgentStart(data.agent, data.emoji, data.role);
+                    break;
 
-            case 'delta':
-                handleDelta(data.agent, data.content);
-                break;
+                case 'delta':
+                    handleDelta(data.agent, data.content);
+                    break;
 
-            case 'agent_done':
-                handleAgentDone(data.agent);
-                break;
+                case 'agent_done':
+                    handleAgentDone(data.agent);
+                    break;
 
-            case 'synthesis_start':
-                handleSynthesisStart(data.agent, data.emoji, data.role);
-                break;
+                case 'synthesis_start':
+                    handleSynthesisStart(data.agent, data.emoji, data.role);
+                    break;
 
-            case 'synthesis_done':
-                handleSynthesisDone();
-                break;
+                case 'synthesis_done':
+                    handleSynthesisDone();
+                    break;
 
-            case 'complete':
-                handleComplete(data.total_agents);
-                streamingEventSource.close();
-                streamingEventSource = null;
-                break;
+                case 'complete':
+                    handleComplete(data.total_agents);
+                    break;
 
-            case 'error':
-                showToast('Błąd streamingu: ' + data.message, 'error');
-                streamingEventSource.close();
-                streamingEventSource = null;
-                showWelcome();
-                break;
+                case 'error':
+                    showToast('Błąd streamingu: ' + data.message, 'error');
+                    showWelcome();
+                    break;
+            }
+        },
+        // onError
+        (error) => {
+            console.error('Stream Error:', error);
+            const errorInfo = handleError(error, 'streaming');
+            if (errorInfo.shouldQueue) {
+                requestQueue.add({
+                    url: '/api/deliberate/stream',
+                    options: {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(requestData)
+                    }
+                });
+            }
+            showWelcome();
+        },
+        // onComplete
+        () => {
+            console.log('Stream completed');
         }
-    };
-
-    streamingEventSource.onerror = (error) => {
-        console.error('SSE Error:', error);
-        streamingEventSource.close();
-        streamingEventSource = null;
-        showToast('Połączenie z serwerem przerwane', 'error');
-    };
+    );
 }
 
 function showStreamingUI() {
@@ -1367,22 +1797,47 @@ function handleAgentStart(agentName, emoji, role) {
     tabContents.appendChild(contentDiv);
 }
 
+let deltaFlushScheduled = false;
+const deltaDirtyAgents = new Set();
+
+function flushDeltaBatch() {
+    deltaFlushScheduled = false;
+    deltaDirtyAgents.forEach((agentName) => {
+        if (!streamingAgentResponses[agentName]) return;
+        const contentEl = document.getElementById(`content-${agentName}`);
+        if (contentEl) {
+            const cursor = contentEl.querySelector('.typing-cursor');
+            if (cursor) cursor.remove();
+            contentEl.innerHTML = formatContent(streamingAgentResponses[agentName].content) + '<span class="typing-cursor"></span>';
+        }
+    });
+    deltaDirtyAgents.clear();
+}
+
+function scheduleDeltaFlush() {
+    if (deltaFlushScheduled) return;
+    deltaFlushScheduled = true;
+    requestAnimationFrame(flushDeltaBatch);
+}
+
 function handleDelta(agentName, token) {
     if (!streamingAgentResponses[agentName]) return;
 
     streamingAgentResponses[agentName].content += token;
-
-    const contentEl = document.getElementById(`content-${agentName}`);
-    if (contentEl) {
-        // Remove cursor, add token, add cursor back
-        const cursor = contentEl.querySelector('.typing-cursor');
-        if (cursor) cursor.remove();
-
-        contentEl.innerHTML = formatContent(streamingAgentResponses[agentName].content) + '<span class="typing-cursor"></span>';
-    }
+    deltaDirtyAgents.add(agentName);
+    scheduleDeltaFlush();
 }
 
 function handleAgentDone(agentName) {
+    deltaDirtyAgents.delete(agentName);
+    // Ensure final text is painted if the last frame batch did not run yet
+    const contentElEarly = document.getElementById(`content-${agentName}`);
+    if (contentElEarly && streamingAgentResponses[agentName]) {
+        const cursorEarly = contentElEarly.querySelector('.typing-cursor');
+        if (cursorEarly) cursorEarly.remove();
+        contentElEarly.innerHTML = formatContent(streamingAgentResponses[agentName].content);
+    }
+
     // Remove typing indicators
     const tab = agentTabs.querySelector(`[data-tab="${agentName}"]`);
     if (tab) {
@@ -1392,10 +1847,6 @@ function handleAgentDone(agentName) {
 
     const contentEl = document.getElementById(`content-${agentName}`);
     if (contentEl) {
-        // Remove cursor
-        const cursor = contentEl.querySelector('.typing-cursor');
-        if (cursor) cursor.remove();
-
         // Update badge
         const badge = contentEl.closest('.agent-card')?.querySelector('.streaming-badge');
         if (badge) {
@@ -1486,24 +1937,120 @@ function showExportButton() {
     resultsArea.appendChild(container);
 }
 
-// Keep original deliberate for fallback/non-streaming mode
+function withTimeoutSignal(timeoutMs) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    return { controller, timeoutId };
+}
+
+async function postDeliberation(path, requestPayload, timeoutMs = 60000) {
+    const { controller, timeoutId } = withTimeoutSignal(timeoutMs);
+    try {
+        const response = await fetch(path, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(requestPayload),
+            signal: controller.signal,
+        });
+
+        const raw = await response.text();
+        let payload = null;
+        try {
+            payload = raw ? JSON.parse(raw) : null;
+        } catch {
+            payload = null;
+        }
+
+        if (!response.ok) {
+            const message = payload?.error?.message || payload?.detail || 'API Error';
+            const error = new Error(message);
+            error.httpStatus = response.status;
+            error.payload = payload;
+            throw error;
+        }
+
+        return payload;
+    } finally {
+        clearTimeout(timeoutId);
+    }
+}
+
+function normalizeDeliberateV2Payload(v2Payload) {
+    const data = v2Payload?.data || {};
+    const diagnostics = v2Payload?.diagnostics || {};
+    const usage = diagnostics?.usage || {
+        prompt_tokens: 0,
+        completion_tokens: 0,
+        total_tokens: 0,
+        total_cost: 0,
+    };
+
+    const agentResponses = Array.isArray(data.agent_responses) ? data.agent_responses : [];
+    const synthesis = data.synthesis || null;
+
+    return {
+        query: data.query || '',
+        timestamp: v2Payload?.meta?.timestamp || new Date().toISOString(),
+        agent_responses: agentResponses,
+        synthesis,
+        sources: Array.isArray(data.sources) ? data.sources : [],
+        total_agents: agentResponses.length + (synthesis ? 1 : 0),
+        usage,
+        session_id: data.session_id || null,
+        routing_intent: diagnostics?.routing?.intent || null,
+        behavior_preset: diagnostics?.quality_flags?.behavior_preset || 'default',
+        quality_mode: diagnostics?.quality_flags?.quality_mode || 'auto',
+        critic_notes: null,
+        agent_weights: null,
+        quality_decision: diagnostics?.quality_decision || null,
+    };
+}
+
+function shouldFallbackToDeliberateV1(error) {
+    if (error?.name === 'AbortError') return true;
+    const status = error?.httpStatus;
+    return status === 404 || status >= 500;
+}
+
+// Keep deliberate() output backward-compatible for current UI usage.
 async function deliberate(query) {
     const chatToggleEl = document.getElementById('chat-toggle');
     const useChatMode = chatToggleEl ? chatToggleEl.checked : false;
+    const requestPayload = {
+        query,
+        provider: currentProvider,
+        model: currentModel,
+        use_knowledge_base: kbToggle?.checked ?? true,
+        chat_mode: useChatMode,
+        attachment_text: attachmentText,
+        history: useChatMode ? history.slice(-3) : [],
+        ...buildDeliberateRequestExtras(),
+    };
 
-    const response = await fetch('/api/deliberate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            query, provider: currentProvider, model: currentModel,
-            use_knowledge_base: kbToggle?.checked ?? true,
-            chat_mode: useChatMode,
-            attachment_text: attachmentText,
-            history: useChatMode ? history.slice(-3) : []
-        })
-    });
-    if (!response.ok) throw new Error((await response.json()).detail || 'API Error');
-    return await response.json();
+    if (isDeliberateV2Enabled()) {
+        try {
+            const v2Payload = await postDeliberation('/api/deliberate/v2', requestPayload);
+            if (v2Payload?.ok === false) {
+                const message = v2Payload?.error?.message || 'API Error';
+                const error = new Error(message);
+                error.httpStatus = 500;
+                error.payload = v2Payload;
+                throw error;
+            }
+            const normalized = normalizeDeliberateV2Payload(v2Payload);
+            if (normalized.session_id) setStoredServerSessionId(normalized.session_id);
+            if (normalized.routing_intent) showRoutingIntentBadge(normalized.routing_intent, '');
+            return normalized;
+        } catch (error) {
+            if (!shouldFallbackToDeliberateV1(error)) throw error;
+            console.warn('Falling back to /api/deliberate v1:', error);
+        }
+    }
+
+    const payload = await postDeliberation('/api/deliberate', requestPayload);
+    if (payload.session_id) setStoredServerSessionId(payload.session_id);
+    if (payload.routing_intent) showRoutingIntentBadge(payload.routing_intent, '');
+    return payload;
 }
 
 // ========== DEBATE MODE ==========
@@ -1556,6 +2103,14 @@ function debateStream(query) {
 
             case 'round_done':
                 handleRoundDone(data.round);
+                break;
+
+            case 'debate_analysis':
+                handleDebateAnalysis(
+                    data.consensus_points || [],
+                    data.disagreement_points || [],
+                    data.disagreement_map || {}
+                );
                 break;
 
             case 'consensus':
@@ -1695,14 +2250,76 @@ function handleRoundDone(roundNum) {
     }
 }
 
+function handleDebateAnalysis(consensusPoints, disagreementPoints, disagreementMap) {
+    const panel = document.getElementById('consensus-panel');
+    if (!panel) return;
+
+    let mapSection = '';
+    if (disagreementMap && typeof disagreementMap === 'object' && Object.keys(disagreementMap).length > 0) {
+        const rows = Object.entries(disagreementMap).map(([topic, views]) => {
+            let inner = '';
+            if (views && typeof views === 'object') {
+                inner = Object.entries(views).map(([agent, view]) =>
+                    `<li class="text-xs text-text-secondary"><strong class="text-white/80">${escapeHtml(agent)}</strong>: ${escapeHtml(String(view))}</li>`
+                ).join('');
+            }
+            return `
+                <div class="border border-white/10 rounded-lg p-3 bg-black/20">
+                    <p class="text-sm font-medium text-primary mb-2">${escapeHtml(topic)}</p>
+                    <ul class="space-y-1 list-none pl-0">${inner}</ul>
+                </div>`;
+        }).join('');
+        mapSection = `
+            <div class="mt-4">
+                <h4 class="font-bold text-sm mb-2 flex items-center gap-2">
+                    <span class="material-symbols-outlined text-[18px]">hub</span>
+                    Mapa niezgodności
+                </h4>
+                <div class="space-y-3">${rows}</div>
+            </div>`;
+    }
+
+    panel.classList.remove('hidden');
+    panel.innerHTML = `
+        <div class="debate-llm-analysis bg-gradient-to-br from-primary/15 to-surface-darker rounded-xl border border-primary/30 p-6 mb-4">
+            <h3 class="font-bold text-lg mb-3 flex items-center gap-2">
+                <span class="material-symbols-outlined text-primary">analytics</span>
+                Wstępna analiza strukturalna
+            </h3>
+            <div class="grid md:grid-cols-2 gap-4">
+                <div class="bg-green-500/10 border border-green-500/20 rounded-lg p-4">
+                    <h4 class="font-bold text-green-400 text-sm mb-2">Zbieżności</h4>
+                    <ul class="space-y-1 text-sm">
+                        ${consensusPoints.length
+        ? consensusPoints.map(p => `<li>✓ ${escapeHtml(p)}</li>`).join('')
+        : '<li class="text-text-secondary italic">—</li>'}
+                    </ul>
+                </div>
+                <div class="bg-orange-500/10 border border-orange-500/20 rounded-lg p-4">
+                    <h4 class="font-bold text-orange-400 text-sm mb-2">Rozbieżności</h4>
+                    <ul class="space-y-1 text-sm">
+                        ${disagreementPoints.length
+        ? disagreementPoints.map(p => `<li>⚠ ${escapeHtml(p)}</li>`).join('')
+        : '<li class="text-text-secondary italic">—</li>'}
+                    </ul>
+                </div>
+            </div>
+            ${mapSection}
+        </div>
+    `;
+}
+
 function handleConsensusResult(consensusPoints, disagreementPoints) {
     debateConsensus = { points: consensusPoints, disagreements: disagreementPoints };
 
     const panel = document.getElementById('consensus-panel');
     if (!panel) return;
 
+    const preliminary = panel.querySelector('.debate-llm-analysis');
+    const prelimHtml = preliminary ? preliminary.outerHTML : '';
+
     panel.classList.remove('hidden');
-    panel.innerHTML = `
+    panel.innerHTML = prelimHtml + `
         <div class="consensus-summary bg-gradient-to-br from-surface-dark to-surface-darker rounded-xl border border-white/10 p-6">
             <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
                 <span>🎯</span> Podsumowanie Debaty
@@ -1878,6 +2495,7 @@ function showWelcome() {
     loadingState?.classList.add('hidden');
     resultsContent?.classList.add('hidden');
     queryDisplay?.classList.add('hidden');
+    hideQualityDecisionBadge();
 }
 
 function showLoading() {
@@ -1903,6 +2521,7 @@ function showResults() {
 // ========== RENDER RESULTS ==========
 function renderResults(result) {
     showResults();
+    showQualityDecisionBadge(result?.quality_decision || null);
     const agents = result.agent_responses || [];
     const hasSynthesis = !!result.synthesis;
 
@@ -2158,6 +2777,7 @@ function resetSession() {
     history = [];
     lastResult = null;
     currentSessionId = null;
+    setStoredServerSessionId(null);
     totalTokensUsed = 0;
     estimatedCost = 0;
     updateStatDisplay();
@@ -2169,9 +2789,15 @@ async function loadStats() {
     try {
         const response = await fetch('/api/stats');
         const stats = await response.json();
-        document.getElementById('kb-vectors').textContent = `${(stats.total_vectors || 0).toLocaleString()} chunków`;
+        const kbVectorsEl = document.getElementById('kb-vectors');
+        if (kbVectorsEl) {
+            kbVectorsEl.textContent = `${(stats.total_vectors || 0).toLocaleString()} chunków`;
+        }
     } catch (err) {
-        document.getElementById('kb-vectors').textContent = 'Niedostępna';
+        const kbVectorsEl = document.getElementById('kb-vectors');
+        if (kbVectorsEl) {
+            kbVectorsEl.textContent = 'Niedostępna';
+        }
     }
 }
 
@@ -2225,6 +2851,28 @@ function storeSessionForExport(query, responses, synthesis, mode) {
         responses: responses || [],
         synthesis: synthesis || null
     };
+}
+
+async function createShareLink() {
+    const sid = getStoredServerSessionId();
+    if (!sid) {
+        showToast('Włącz zapis sesji na serwerze (💾 Serwer), wykonaj naradę, potem utwórz link.', 'error');
+        return;
+    }
+    try {
+        const r = await fetch('/api/share', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ session_id: sid }),
+        });
+        if (!r.ok) throw new Error('share failed');
+        const d = await r.json();
+        const url = `${window.location.origin}${d.share_url}`;
+        await navigator.clipboard.writeText(url);
+        showToast('Skopiowano link udostępnienia do schowka', 'success');
+    } catch {
+        showToast('Nie udało się utworzyć linku', 'error');
+    }
 }
 
 function exportSessionMarkdown() {
@@ -2380,6 +3028,13 @@ function showExportMenu(event) {
     menu.style.top = (event.clientY + 10) + 'px';
     menu.style.left = event.clientX + 'px';
 
+    const sid = getStoredServerSessionId();
+    const serverPdf = sid
+        ? `<button onclick="window.open('/api/sessions/${sid}/export?format=pdf','_blank'); closeExportMenu();" class="w-full text-left px-3 py-2 rounded hover:bg-white/10 flex items-center gap-2 text-sm">
+            <span class="material-symbols-outlined text-[18px]">picture_as_pdf</span>
+            PDF (serwer)
+        </button>`
+        : '';
     menu.innerHTML = `
         <button onclick="exportSessionMarkdown(); closeExportMenu();" class="w-full text-left px-3 py-2 rounded hover:bg-white/10 flex items-center gap-2 text-sm">
             <span class="material-symbols-outlined text-[18px]">description</span>
@@ -2388,6 +3043,11 @@ function showExportMenu(event) {
         <button onclick="exportSessionHtml(); closeExportMenu();" class="w-full text-left px-3 py-2 rounded hover:bg-white/10 flex items-center gap-2 text-sm">
             <span class="material-symbols-outlined text-[18px]">code</span>
             HTML
+        </button>
+        ${serverPdf}
+        <button onclick="createShareLink(); closeExportMenu();" class="w-full text-left px-3 py-2 rounded hover:bg-white/10 flex items-center gap-2 text-sm">
+            <span class="material-symbols-outlined text-[18px]">link</span>
+            Link do udostępnienia
         </button>
         <button onclick="copySessionToClipboard(); closeExportMenu();" class="w-full text-left px-3 py-2 rounded hover:bg-white/10 flex items-center gap-2 text-sm">
             <span class="material-symbols-outlined text-[18px]">content_copy</span>
@@ -3097,6 +3757,22 @@ function copySEOArticle(format) {
         showToast('Błąd kopiowania', 'error');
         console.error(err);
     });
+}
+
+function downloadSEOFullPage() {
+    if (!seoLastResult || !seoLastResult.full_page_html) {
+        showToast('Brak pełnej strony HTML (wygeneruj artykuł ponownie)', 'error');
+        return;
+    }
+    const title = (seoLastResult.title || 'article').replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '_') || 'article';
+    const blob = new Blob([seoLastResult.full_page_html], { type: 'text/html;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${title}.html`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast('Pobrano pełną stronę HTML', 'success');
 }
 
 async function openBrandInfoModal() {

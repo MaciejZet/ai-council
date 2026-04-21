@@ -88,18 +88,14 @@ class BaseAgent(ABC):
                 + "\n---\n".join(context)
             )
         
-        # Sprawdź czy nakładamy limit - jeśli tak, dodaj instrukcję o zwięzłości
-        limit_instruction = ""
-        if self._calculate_dynamic_max_tokens(query):
-             limit_instruction = "\nWAŻNE: ODPOWIEDZ MAKSYMALNIE W 3 ZDANIACH. Bądź konkretny. Zakończ myśl."
-
         return f"""## Zapytanie użytkownika:
 {query}
 {context_section}
 
 ## Twoja analiza:
-Przeanalizuj powyższe z perspektywy swojej roli jako {self.role}. 
-Odpowiedz po polsku, strukturalnie i konkretnie.{limit_instruction}"""
+Przeanalizuj powyższe z perspektywy swojej roli jako {self.role}.
+Odpowiedz po polsku, strukturalnie i konkretnie. Bądź zwięzły ale kompletny -
+dostarcz wartościową analizę bez zbędnego gadania."""
     
     async def analyze(self, query: str, context: List[str] = None) -> AgentResponse:
         """
@@ -166,16 +162,25 @@ Odpowiedz po polsku, strukturalnie i konkretnie.{limit_instruction}"""
     def _calculate_dynamic_max_tokens(self, query: str) -> Optional[int]:
         """
         Oblicza dynamiczny limit tokenów na podstawie długości/złożoności zapytania.
-        Dla krótkich pytań (np. "Co tam?") ustawia twardy limit, aby wymusić zwięzłość.
+        Zapewnia rozsądne limity dla wszystkich typów pytań.
         """
         word_count = len(query.split())
-        char_count = len(query)
-        
-        # Jeśli pytanie jest bardzo krótkie
-        if word_count < 10 and char_count < 50:
-            return 500  # Bezpieczny zapas na 3 zdania, prompt pilnuje zwięzłości
-            
-        return None  # Brak limitu (standardowy limit modelu)
+
+        # Krótkie pytania (1-10 słów) - średnia odpowiedź
+        if word_count <= 10:
+            return 1000  # ~750 słów, wystarczy na pełną odpowiedź
+
+        # Średnie pytania (11-30 słów) - dłuższa odpowiedź
+        elif word_count <= 30:
+            return 1500  # ~1100 słów
+
+        # Długie pytania (31-50 słów) - szczegółowa odpowiedź
+        elif word_count <= 50:
+            return 2000  # ~1500 słów
+
+        # Bardzo długie pytania (50+ słów) - kompleksowa odpowiedź
+        else:
+            return 2500  # ~1900 słów
 
     def _smart_truncate(self, text: str) -> str:
         """Przycina tekst do ostatniego pełnego zdania"""

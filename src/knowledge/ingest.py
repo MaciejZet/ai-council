@@ -268,7 +268,8 @@ def ingest_pdf(pdf_path: str, source_type: str = "book", batch_size: int = 100) 
     
     # Przygotuj dane do Pinecone
     index = get_pinecone_index()
-    
+    doc_id = hashlib.sha256(f"{str(pdf_path)}|{filename}".encode()).hexdigest()[:28]
+
     vectors = []
     for i, (chunk, embedding) in enumerate(zip(chunks, embeddings)):
         vector_id = generate_chunk_id(filename, i)
@@ -283,7 +284,10 @@ def ingest_pdf(pdf_path: str, source_type: str = "book", batch_size: int = 100) 
                 "source_type": source_type,     # book/summary/article
                 "chunk_index": chunk["chunk_index"],
                 "total_chunks": len(chunks),
-                "source_path": str(pdf_path)
+                "source_path": str(pdf_path),
+                "doc_id": doc_id,
+                "tags": "",
+                "embedding_version": "v1",
             }
         })
     
@@ -300,7 +304,8 @@ def ingest_pdf(pdf_path: str, source_type: str = "book", batch_size: int = 100) 
         "category": category,
         "language": language,
         "chunks_count": len(chunks),
-        "characters_count": len(text)
+        "characters_count": len(text),
+        "doc_id": doc_id,
     }
 
 
@@ -380,6 +385,239 @@ def get_ingestion_stats() -> Dict[str, Any]:
             "namespaces": {},
             "error": str(e)
         }
+
+
+def _upsert_text_to_pinecone(
+    title: str,
+    text: str,
+    *,
+    source_type: str,
+    category: str,
+    language: str,
+    source_path: str,
+    tags: str = "",
+    embedding_version: str = "v1",
+    batch_size: int = 100,
+) -> Dict[str, Any]:
+    """Shared upsert for raw text (URL, Notion, txt/md)."""
+    if not text.strip():
+        return {"status": "error", "message": "Pusty tekst"}
+
+    doc_id = hashlib.sha256(f"{title}|{source_path}|{embedding_version}".encode()).hexdigest()[:28]
+    chunks = chunk_text(text)
+    chunk_texts = [c["text"] for c in chunks]
+    embeddings = get_embeddings(chunk_texts)
+    index = get_pinecone_index()
+
+    vectors = []
+    for i, (chunk, embedding) in enumerate(zip(chunks, embeddings)):
+        vector_id = hashlib.md5(f"{doc_id}_{i}".encode()).hexdigest()
+        vectors.append(
+            {
+                "id": vector_id,
+                "values": embedding,
+                "metadata": {
+                    "text": chunk["text"],
+                    "title": title[:500],
+                    "category": category,
+                    "language": language,
+                    "source_type": source_type,
+                    "chunk_index": chunk["chunk_index"],
+                    "total_chunks": len(chunks),
+                    "source_path": source_path[:1000],
+                    "doc_id": doc_id,
+                    "tags": tags[:500],
+                    "embedding_version": embedding_version,
+                },
+            }
+        )
+
+    for i in range(0, len(vectors), batch_size):
+        batch = vectors[i : i + batch_size]
+        index.upsert(vectors=batch)
+
+    return {
+        "status": "success",
+        "title": title,
+        "category": category,
+        "language": language,
+        "chunks_count": len(chunks),
+        "characters_count": len(text),
+        "doc_id": doc_id,
+    }
+
+
+def extract_text_from_html(html: str) -> str:
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(html, "html.parser")
+    for tag in soup(["script", "style", "noscript"]):
+        tag.decompose()
+    return soup.get_text(separator="\n", strip=True)
+
+
+def fetch_url_text(url: str, timeout: float = 30.0) -> tuple[str, str]:
+    import httpx
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (compatible; AICouncilBot/1.0; +https://example.local)"
+    }
+    with httpx.Client(follow_redirects=True, timeout=timeout, headers=headers) as client:
+        r = client.get(url)
+        r.raise_for_status()
+        ctype = r.headers.get("content-type", "")
+        if "text/html" in ctype.lower():
+            title = url
+            text = extract_text_from_html(r.text)
+            # crude title from <title>
+            try:
+                from bs4 import BeautifulSoup
+
+                t = BeautifulSoup(r.text, "html.parser").find("title")
+                if t and t.string:
+                    title = t.string.strip()[:200]
+            except Exception:
+                pass
+            return title, text
+        return url, r.text
+
+
+def ingest_url(
+    url: str,
+    *,
+    category: str = "ogólne",
+    tags: str = "",
+    embedding_version: str = "v1",
+) -> Dict[str, Any]:
+    """Pobiera stronę HTTP i indeksuje treść."""
+    try:
+        title, text = fetch_url_text(url)
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+    return _upsert_text_to_pinecone(
+        title,
+        text,
+        source_type="web",
+        category=category,
+        language="pl",
+        source_path=url,
+        tags=tags,
+        embedding_version=embedding_version,
+    )
+
+
+def ingest_notion_page(
+    page_id: str,
+    *,
+    category: str = "ogólne",
+    tags: str = "",
+    embedding_version: str = "v1",
+) -> Dict[str, Any]:
+    """Pobiera treść strony Notion (wymaga NOTION_API_KEY)."""
+    token = os.getenv("NOTION_API_KEY")
+    if not token or token.strip() in ("", "dummy-key"):
+        return {"status": "error", "message": "NOTION_API_KEY nie jest ustawiony"}
+
+    import httpx
+
+    headers = {"Authorization": f"Bearer {token}", "Notion-Version": "2022-06-28"}
+    base = "https://api.notion.com/v1"
+    with httpx.Client(timeout=60.0, headers=headers) as client:
+        pr = client.get(f"{base}/pages/{page_id}")
+        if pr.status_code != 200:
+            return {"status": "error", "message": pr.text[:500]}
+        page = pr.json()
+        title = "Notion"
+        try:
+            props = page.get("properties") or {}
+            for _k, v in props.items():
+                if isinstance(v, dict) and v.get("type") == "title":
+                    parts = v.get("title") or []
+                    title = "".join(p.get("plain_text", "") for p in parts) or title
+                    break
+        except Exception:
+            pass
+
+        texts: list[str] = []
+
+        def walk_blocks(block_id: str) -> None:
+            r = client.get(f"{base}/blocks/{block_id}/children")
+            if r.status_code != 200:
+                return
+            data = r.json()
+            for block in data.get("results") or []:
+                btype = block.get("type")
+                payload = block.get(btype) or {}
+                if btype in ("paragraph", "heading_1", "heading_2", "heading_3", "bulleted_list_item", "numbered_list_item", "quote", "to_do"):
+                    rich = payload.get("rich_text") or []
+                    line = "".join(p.get("plain_text", "") for p in rich)
+                    if line.strip():
+                        texts.append(line)
+                if block.get("has_children"):
+                    walk_blocks(block["id"])
+
+        walk_blocks(page_id)
+        body = "\n\n".join(texts)
+
+    if not body.strip():
+        return {"status": "error", "message": "Brak tekstu w blokach Notion (tylko pierwsze poziomy)."}
+
+    return _upsert_text_to_pinecone(
+        title,
+        body,
+        source_type="notion",
+        category=category,
+        language="pl",
+        source_path=f"notion:{page_id}",
+        tags=tags,
+        embedding_version=embedding_version,
+    )
+
+
+def ingest_text_file(path: str, source_type: str = "file", category: str = "ogólne", tags: str = "") -> Dict[str, Any]:
+    """Import pojedynczego pliku .txt lub .md."""
+    p = Path(path)
+    if not p.is_file():
+        return {"status": "error", "message": "Plik nie istnieje"}
+    if p.suffix.lower() not in (".txt", ".md", ".markdown"):
+        return {"status": "error", "message": "Obsługiwane: .txt, .md"}
+    text = p.read_text(encoding="utf-8", errors="replace")
+    lang = "pl" if any(c in p.stem for c in "ąćęłńóśźżĄĆĘŁŃÓŚŹŻ") else "en"
+    return _upsert_text_to_pinecone(
+        p.stem,
+        text,
+        source_type=source_type,
+        category=category,
+        language=lang,
+        source_path=str(p.resolve()),
+        tags=tags,
+    )
+
+
+def ingest_mixed_directory(directory_path: str, source_type_default: str = "book") -> List[Dict[str, Any]]:
+    """PDF, TXT, MD w jednym katalogu."""
+    path = Path(directory_path)
+    if not path.is_dir():
+        return [{"status": "error", "message": "To nie jest katalog"}]
+    results: List[Dict[str, Any]] = []
+    for pdf_file in sorted(path.glob("*.pdf")):
+        results.append(ingest_pdf(str(pdf_file), source_type_default))
+    for ext in ("*.txt", "*.md", "*.markdown"):
+        for f in sorted(path.glob(ext)):
+            results.append(ingest_text_file(str(f), source_type="file"))
+    return results
+
+
+def refresh_document_embeddings(doc_id: str, embedding_version: str = "v2") -> Dict[str, Any]:
+    """
+    Usuń stare wektory doc_id i ponownie załaduj — wymaga ponownego ingestu źródła
+    (ten endpoint tylko czyści Pinecone po doc_id).
+    """
+    from src.knowledge.retriever import delete_vectors_by_doc_id
+
+    if delete_vectors_by_doc_id(doc_id):
+        return {"status": "success", "message": f"Usunięto wektory doc_id={doc_id}. Zaimportuj plik/URL ponownie.", "embedding_version": embedding_version}
+    return {"status": "error", "message": "Nie udało się usunąć lub brak doc_id w indeksie"}
 
 
 if __name__ == "__main__":

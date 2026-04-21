@@ -5,12 +5,15 @@ Analiza konkurencji w wynikach wyszukiwania Google
 Wykorzystuje Tavily lub DuckDuckGo do uzyskania SERP
 """
 
+import logging
 import os
-from typing import List, Optional, Dict, Any
+from typing import Any, Dict, List, Optional
 from dataclasses import dataclass, field
 from dotenv import load_dotenv
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -216,7 +219,8 @@ class SERPAnalyzer:
         try:
             parsed = urlparse(url)
             return parsed.netloc
-        except:
+        except Exception as e:
+            logger.debug("urlparse failed for %r: %s", url, e)
             return ""
     
     def _extract_common_themes(self, competitors: List[CompetitorArticle]) -> List[str]:
@@ -336,19 +340,22 @@ Odpowiedz w formacie JSON:
             user_prompt=prompt,
             temperature=0.3
         )
-        
-        # Parsuj JSON z odpowiedzi
+
         import json
         import re
-        
-        # Wyciągnij JSON z odpowiedzi
-        json_match = re.search(r'\{[^}]+\}', response.content, re.DOTALL)
-        if json_match:
-            data = json.loads(json_match.group())
+
+        raw = response.content.strip()
+        json_blob = raw
+        fence = re.search(r"```(?:json)?\s*([\s\S]*?)```", raw)
+        if fence:
+            json_blob = fence.group(1).strip()
+        start, end = json_blob.find("{"), json_blob.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            data = json.loads(json_blob[start : end + 1])
             serp_result.common_themes = data.get("common_themes", serp_result.common_themes)
             serp_result.content_gaps = data.get("content_gaps", serp_result.content_gaps)
             serp_result.suggested_angles = data.get("suggested_angles", serp_result.suggested_angles)
-            
+
     except Exception as e:
         print(f"LLM SERP analysis error: {e}")
     

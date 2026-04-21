@@ -16,6 +16,54 @@ from src.knowledge.retriever import query_knowledge, format_sources_for_display
 from src.llm_providers import LLMProvider, calculate_cost
 
 
+async def extract_debate_structure_llm(
+    llm: LLMProvider,
+    query: str,
+    debate_summary: str,
+) -> tuple[List[str], List[str], Dict[str, Any]]:
+    """
+    Wyodrębnia punkty zgodne, sporne i mapę rozbieżności (LLM + JSON).
+    """
+    import re
+
+    prompt = f"""Przeanalizuj debatę ekspertów i zwróć WYŁĄCZNIE poprawny JSON (bez markdown):
+{{
+  "consensus_points": ["krótki punkt 1", "punkt 2"],
+  "disagreement_points": ["kontrowersja 1", "kontrowersja 2"],
+  "disagreement_map": {{
+     "temat lub teza": {{"agent_a": "stanowisko", "agent_b": "inne stanowisko"}}
+  }}
+}}
+Pytanie użytkownika: {query[:2000]}
+
+Transkrypt debaty:
+{debate_summary[:14000]}
+"""
+    try:
+        response = await llm.generate(
+            system_prompt="Jesteś analitykiem debat. Odpowiadasz wyłącznie JSON.",
+            user_prompt=prompt,
+            temperature=0.2,
+        )
+        raw = response.content.strip()
+        fence = re.search(r"```(?:json)?\s*([\s\S]*?)```", raw)
+        if fence:
+            raw = fence.group(1).strip()
+        start, end = raw.find("{"), raw.rfind("}")
+        if start == -1 or end == -1:
+            return [], [], {}
+        data = json.loads(raw[start : end + 1])
+        cons = [str(x) for x in data.get("consensus_points", []) if x][:8]
+        dis = [str(x) for x in data.get("disagreement_points", []) if x][:8]
+        dmap = data.get("disagreement_map", {})
+        if not isinstance(dmap, dict):
+            dmap = {}
+        return cons, dis, dmap
+    except Exception as exc:
+        print(f"Debate structure extraction error: {exc}")
+        return [], [], {}
+
+
 @dataclass
 class DebateRound:
     """Pojedyncza runda debaty"""
@@ -215,15 +263,31 @@ class DebateOrchestrator:
         # ========== RUNDA 3: KONSENSUS (Syntezator analizuje) ==========
         if max_rounds >= 3 and synthesizer:
             yield f"data: {json.dumps({'event': 'round_start', 'round': 3, 'type': 'consensus', 'title': 'Analiza konsensusu'})}\n\n"
-            
-            # Przygotuj specjalny prompt dla syntezy debaty
+
             debate_context = self._build_debate_summary(all_rounds)
-            
+            structured_consensus: List[str] = []
+            structured_disagreement: List[str] = []
+            disagreement_map: Dict[str, Any] = {}
+            if llm:
+                structured_consensus, structured_disagreement, disagreement_map = await extract_debate_structure_llm(
+                    llm, query, debate_context
+                )
+                yield f"data: {json.dumps({'event': 'debate_analysis', 'consensus_points': structured_consensus, 'disagreement_points': structured_disagreement, 'disagreement_map': disagreement_map})}\n\n"
+
             yield f"data: {json.dumps({'event': 'agent_start', 'agent': 'Syntezator', 'emoji': '🔮', 'role': 'Consensus Builder', 'round': 3})}\n\n"
-            
+
+            analysis_block = ""
+            if structured_consensus or structured_disagreement:
+                analysis_block = f"""
+## WSTĘPNA ANALIZA STRUKTURALNA
+**Zbieżności:** {json.dumps(structured_consensus, ensure_ascii=False)}
+**Rozbieżności:** {json.dumps(structured_disagreement, ensure_ascii=False)}
+**Mapa niezgodności:** {json.dumps(disagreement_map, ensure_ascii=False)}
+"""
+
             consensus_prompt = f"""## ORYGINALNE PYTANIE UŻYTKOWNIKA:
 {query}
-
+{analysis_block}
 ## DEBATA EKSPERTÓW:
 {debate_context}
 
@@ -307,11 +371,22 @@ Odpowiedz w formacie markdown, jasno i strukturalnie. Pamiętaj: użytkownik chc
         
         for line in lines:
             line_lower = line.lower()
-            
-            if 'konsensus' in line_lower or 'zgadzają' in line_lower or '✅' in line:
-                current_section = 'consensus'
-            elif 'sporne' in line_lower or 'różnice' in line_lower or '⚠️' in line:
-                current_section = 'disagreements'
+
+            if (
+                "konsensus" in line_lower
+                or "zgadzaj" in line_lower
+                or "zbieżn" in line_lower
+                or "✅" in line
+            ):
+                current_section = "consensus"
+            elif (
+                "sporn" in line_lower
+                or "różnic" in line_lower
+                or "rozbieżn" in line_lower
+                or "niezgodn" in line_lower
+                or "⚠️" in line
+            ):
+                current_section = "disagreements"
             elif 'rekomendacja' in line_lower or '🎯' in line:
                 current_section = None
             elif line.strip().startswith(('-', '•', '*', '1.', '2.', '3.', '4.', '5.')):

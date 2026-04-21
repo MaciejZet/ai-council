@@ -4,10 +4,11 @@ Session Export
 Export sesji do Markdown i PDF
 """
 
-from datetime import datetime
-from typing import Optional
-from pathlib import Path
 import io
+import logging
+from datetime import datetime
+from pathlib import Path
+from typing import Optional
 
 from .session_history import SessionData, session_history
 
@@ -294,7 +295,10 @@ def _format_date(iso_timestamp: str) -> str:
     try:
         dt = datetime.fromisoformat(iso_timestamp)
         return dt.strftime("%d.%m.%Y, %H:%M")
-    except:
+    except (ValueError, TypeError, OSError) as e:
+        logging.getLogger(__name__).debug(
+            "Could not parse ISO timestamp %r: %s", iso_timestamp, e
+        )
         return iso_timestamp
 
 

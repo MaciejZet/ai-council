@@ -36,13 +36,21 @@ class WikipediaPlugin(BasePlugin):
             lang: Język (pl, en, de, etc.)
             summary_only: Czy pobierać tylko streszczenie
         """
+        normalized_query = (query or "").strip()
+        if not normalized_query:
+            return PluginResult(
+                success=False,
+                error="Empty query is not allowed",
+                source="wikipedia",
+            )
+
         try:
             # Najpierw wyszukaj
-            search_result = await self._search(query, lang)
+            search_result = await self._search(normalized_query, lang)
             if not search_result:
                 return PluginResult(
                     success=False,
-                    error=f"Nie znaleziono artykułu: {query}",
+                    error=f"Nie znaleziono artykułu: {normalized_query}",
                     source="wikipedia"
                 )
             

@@ -97,8 +97,22 @@ class StockPricesPlugin(BasePlugin):
             indicators = quote.get("indicators", {}).get("quote", [{}])[0]
             
             # Ostatnia cena
-            current_price = meta.get("regularMarketPrice", 0)
-            prev_close = meta.get("previousClose", current_price)
+            def _to_float(value, default: float = 0.0) -> float:
+                try:
+                    if value is None:
+                        return default
+                    return float(value)
+                except (TypeError, ValueError):
+                    return default
+
+            raw_current = meta.get("regularMarketPrice")
+            raw_prev_close = meta.get("previousClose")
+
+            current_price = _to_float(
+                raw_current,
+                default=_to_float(raw_prev_close, 0.0),
+            )
+            prev_close = _to_float(raw_prev_close, current_price)
             change = current_price - prev_close
             change_pct = (change / prev_close * 100) if prev_close else 0
             

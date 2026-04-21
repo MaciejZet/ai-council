@@ -4,12 +4,17 @@ URL Analyzer Plugin
 Analiza i ekstrakcja treści ze stron WWW
 """
 
+import json
+import logging
 import re
+from typing import Any, Dict, List, Optional
+
 import httpx
-from typing import Optional, Dict, Any, List
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 from src.plugins import BasePlugin, PluginResult
+
+_log = logging.getLogger(__name__)
 
 
 class URLAnalyzerPlugin(BasePlugin):
@@ -199,24 +204,25 @@ class URLAnalyzerPlugin(BasePlugin):
             text = match.group(2).strip()
             
             # Skip puste i anchor linki
-            if not href or href.startswith('#') or href.startswith('javascript:'):
+            if not href:
                 continue
-            
-            # Absolutne URL
-            if href.startswith('/'):
-                parsed = urlparse(base_url)
-                href = f"{parsed.scheme}://{parsed.netloc}{href}"
-            elif not href.startswith('http'):
+
+            href_lower = href.lower()
+            if href.startswith("#") or href_lower.startswith("javascript:"):
+                continue
+
+            absolute_url = urljoin(base_url, href)
+            parsed_url = urlparse(absolute_url)
+            if parsed_url.scheme not in ("http", "https"):
                 continue
             
             if text and len(text) > 2:
-                links.append({"url": href, "text": text[:100]})
+                links.append({"url": absolute_url, "text": text[:100]})
         
         return links
     
     def _parse_json(self, text: str) -> Dict[str, Any]:
         """Parsuje odpowiedź JSON"""
-        import json
         try:
             data = json.loads(text)
             return {
@@ -224,7 +230,7 @@ class URLAnalyzerPlugin(BasePlugin):
                 "content": str(data)[:5000],
                 "keys": list(data.keys()) if isinstance(data, dict) else None
             }
-        except:
+        except json.JSONDecodeError:
             return {
                 "type": "json_error",
                 "content": text[:1000]
@@ -235,7 +241,8 @@ class URLAnalyzerPlugin(BasePlugin):
         try:
             result = urlparse(url)
             return all([result.scheme in ('http', 'https'), result.netloc])
-        except:
+        except Exception as e:
+            _log.debug("urlparse failed for %r: %s", url, e)
             return False
     
     async def summarize(self, url: str, llm_provider=None) -> PluginResult:
