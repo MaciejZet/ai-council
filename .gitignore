@@ -14,3 +14,7 @@ tood.md
 note.md
 logs/
 debug_api_keys.txt
+data/*.db
+
+# Cursor IDE — stan lokalny (ścieżki hosta, transcripts); nie commituj
+.cursor/

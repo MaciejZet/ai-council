@@ -34,6 +34,7 @@ class TestValidation:
         )
         assert request.query == "What is the best marketing strategy?"
         assert request.provider == "openai"
+        assert request.quality_mode == "auto"
 
     def test_query_too_long(self):
         """Test query length validation"""
@@ -49,6 +50,11 @@ class TestValidation:
         """Test invalid provider rejection"""
         with pytest.raises(ValueError):
             QueryRequest(query="test", provider="invalid_provider")
+
+    def test_invalid_quality_mode(self):
+        """Test quality mode enum validation."""
+        with pytest.raises(ValueError):
+            QueryRequest(query="test", quality_mode="unsupported")
 
     def test_custom_agent_validation(self):
         """Test custom agent validation"""

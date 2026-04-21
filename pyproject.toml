@@ -73,6 +73,9 @@ Documentation = "https://github.com/yourusername/ai-council#readme"
 Repository = "https://github.com/yourusername/ai-council"
 Issues = "https://github.com/yourusername/ai-council/issues"
 
+[tool.uv]
+# Dev dependencies live in [project.optional-dependencies] dev — use: uv sync --extra dev
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

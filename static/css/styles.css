@@ -1,5 +1,149 @@
 /* AI Council - Custom Styles */
 
+:root {
+    --ac-accent: #0d9488;
+    --ac-accent-soft: rgba(13, 148, 136, 0.15);
+    --ac-accent-glow: rgba(34, 211, 238, 0.35);
+}
+
+body.mobile-nav-open {
+    overflow: hidden;
+}
+
+/* Skip link (keyboard / screen readers) */
+.skip-link {
+    position: fixed;
+    left: 0.75rem;
+    top: 0.75rem;
+    z-index: 100;
+    padding: 0.5rem 1rem;
+    border-radius: 0.5rem;
+    font-size: 0.875rem;
+    font-weight: 600;
+    background: var(--ac-accent);
+    color: #fff;
+    box-shadow: 0 4px 20px var(--ac-accent-glow);
+    transform: translateY(-150%);
+    transition: transform 0.2s ease, opacity 0.2s ease;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.skip-link:focus {
+    transform: translateY(0);
+    opacity: 1;
+    pointer-events: auto;
+    outline: 2px solid #fff;
+    outline-offset: 2px;
+}
+
+/* Advanced options under query input */
+.query-advanced summary::-webkit-details-marker {
+    display: none;
+}
+
+.adv-chevron {
+    display: inline-block;
+    transition: transform 0.2s ease;
+}
+
+.query-advanced[open] .adv-chevron {
+    transform: rotate(90deg);
+}
+
+/* Welcome screen subtle entrance */
+@media (prefers-reduced-motion: no-preference) {
+    .welcome-screen .welcome-icon {
+        animation: welcome-pop 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
+    }
+
+    .welcome-screen .agent-chip {
+        opacity: 0;
+        animation: chip-in 0.45s ease forwards;
+    }
+
+    .welcome-screen .agent-chip:nth-child(1) {
+        animation-delay: 0.08s;
+    }
+
+    .welcome-screen .agent-chip:nth-child(2) {
+        animation-delay: 0.14s;
+    }
+
+    .welcome-screen .agent-chip:nth-child(3) {
+        animation-delay: 0.2s;
+    }
+
+    .welcome-screen .agent-chip:nth-child(4) {
+        animation-delay: 0.26s;
+    }
+
+    .welcome-screen .agent-chip:nth-child(5) {
+        animation-delay: 0.32s;
+    }
+}
+
+@keyframes welcome-pop {
+    from {
+        opacity: 0;
+        transform: scale(0.85) translateY(8px);
+    }
+
+    to {
+        opacity: 1;
+        transform: scale(1) translateY(0);
+    }
+}
+
+@keyframes chip-in {
+    from {
+        opacity: 0;
+        transform: translateY(6px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* Mobile drawer panel */
+@keyframes slideInFromLeft {
+    from {
+        transform: translateX(-100%);
+        opacity: 0.96;
+    }
+
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
+
+#mobile-nav:not(.hidden) #mobile-nav-panel {
+    animation: slideInFromLeft 0.22s ease-out;
+}
+
+/* Focus visibility for non-Tailwind controls */
+button:focus-visible,
+a:focus-visible,
+summary:focus-visible,
+[role="button"]:focus-visible {
+    outline: 2px solid var(--ac-accent);
+    outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+    }
+}
+
 /* Tab styles */
 .tab-content {
     display: none;
@@ -10,15 +154,15 @@
 }
 
 .tab-button.active {
-    background-color: rgba(59, 25, 230, 0.1);
+    background-color: var(--ac-accent-soft);
     color: white;
-    border-color: rgba(59, 25, 230, 0.2);
+    border-color: rgba(13, 148, 136, 0.35);
 }
 
 .agent-list-item.active {
-    box-shadow: 0 0 0 2px #3b19e6;
-    background-color: rgba(59, 25, 230, 0.1);
-    border-color: rgba(59, 25, 230, 0.2);
+    box-shadow: 0 0 0 2px var(--ac-accent);
+    background-color: var(--ac-accent-soft);
+    border-color: rgba(13, 148, 136, 0.35);
 }
 
 /* Agent cards */
@@ -83,9 +227,9 @@
     content: '';
     position: absolute;
     inset: -2px;
-    background: linear-gradient(135deg, #3b19e6, #9333ea);
+    background: linear-gradient(135deg, #0d9488, #0891b2, #0e7490);
     border-radius: 18px;
-    opacity: 0.3;
+    opacity: 0.35;
     filter: blur(8px);
     z-index: -1;
 }
@@ -215,7 +359,7 @@
 }
 
 .tab-button:hover {
-    background-color: rgba(59, 25, 230, 0.05);
+    background-color: rgba(13, 148, 136, 0.08);
 }
 
 /* ========== STREAMING STYLES ========== */
@@ -225,7 +369,7 @@
     display: inline-block;
     width: 2px;
     height: 1.1em;
-    background: #3b19e6;
+    background: var(--ac-accent);
     margin-left: 2px;
     vertical-align: text-bottom;
     animation: blink 0.8s infinite;
@@ -325,9 +469,9 @@
 }
 
 .mode-btn.active {
-    background: rgba(59, 25, 230, 0.2);
-    color: #9b8cff;
-    border-color: rgba(59, 25, 230, 0.3);
+    background: var(--ac-accent-soft);
+    color: #5eead4;
+    border-color: rgba(13, 148, 136, 0.45);
 }
 
 /* ========== DEBATE STYLES ========== */
@@ -355,7 +499,7 @@
 }
 
 .debate-response .reacting-to {
-    background: rgba(59, 25, 230, 0.1);
+    background: var(--ac-accent-soft);
     border-radius: 8px;
     padding: 0.5rem 0.75rem;
     margin-bottom: 0.75rem;
@@ -398,7 +542,7 @@
 
 .settings-tab.active {
     color: white;
-    border-bottom-color: #3b19e6;
+    border-bottom-color: var(--ac-accent);
 }
 
 .settings-tab-content {

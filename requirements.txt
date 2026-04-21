@@ -1,3 +1,6 @@
+# Legacy / pip-only mirror. Zrodlem prawdy jest pyproject.toml + uv.lock.
+# Zalecane: uv sync --extra dev
+#
 # Core
 python-dotenv>=1.0.0
 pydantic>=2.0.0

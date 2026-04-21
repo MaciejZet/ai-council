@@ -9,13 +9,16 @@ import os
 import json
 import time
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 from contextlib import asynccontextmanager
+from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse, FileResponse, StreamingResponse, Response
+from fastapi.responses import HTMLResponse, FileResponse, StreamingResponse, Response, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, ValidationError
 
@@ -30,6 +33,7 @@ from src.council.orchestrator import Council, CouncilDeliberation, format_delibe
 from src.council.debate import DebateOrchestrator
 from src.council.routing import route_query
 from src.council.fast_mode import fast_response
+from src.council.quality_decision import evaluate_quality_mode, QualityDecision
 from src.knowledge.ingest import (
     ingest_pdf,
     get_ingestion_stats,
@@ -47,6 +51,9 @@ from src.llm_providers import (
     OpenRouterProvider,
     PerplexityProvider,
     AVAILABLE_PROVIDERS,
+    OPENROUTER_MODELS_FALLBACK,
+    fetch_openrouter_catalog_entries,
+    openrouter_tier_for_row,
     get_provider,
 )
 from src.custom_api_provider import CustomAPIProvider
@@ -132,6 +139,106 @@ class DeliberationResult(BaseModel):
     behavior_preset: Optional[str] = None
     critic_notes: Optional[str] = None
     agent_weights: Optional[List[Dict[str, Any]]] = None
+    quality_decision: Optional[Dict[str, Any]] = None
+
+
+class DeliberationApiException(Exception):
+    """Domain exception for deliberate endpoints with normalized code/status."""
+
+    def __init__(
+        self,
+        *,
+        status_code: int,
+        code: str,
+        message: str,
+        details: Optional[Any] = None,
+    ):
+        super().__init__(message)
+        self.status_code = status_code
+        self.code = code
+        self.message = message
+        self.details = details
+
+
+class DeliberationV2Data(BaseModel):
+    query: str
+    synthesis: Optional[AgentResponseData]
+    agent_responses: List[AgentResponseData]
+    sources: List[SourceData]
+    session_id: Optional[str] = None
+
+
+class DeliberationV2Meta(BaseModel):
+    version: str = "v2"
+    trace_id: str
+    timestamp: str
+
+
+class DeliberationV2RoutingDiagnostics(BaseModel):
+    intent: Optional[str] = None
+
+
+class DeliberationV2UsageDiagnostics(BaseModel):
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+    total_cost: float = 0.0
+
+
+class DeliberationV2QualityFlags(BaseModel):
+    quality_mode: str = "auto"
+    behavior_preset: str = "default"
+    enable_critic: bool = False
+    enable_weighted_voting: bool = False
+    hybrid_search: bool = False
+
+
+class DeliberationV2QualityDecision(BaseModel):
+    mode: str = "auto"
+    applied_critic: bool = False
+    applied_weighted_voting: bool = False
+    reason: str = ""
+    risk_score: float = 0.0
+
+
+class DeliberationV2Diagnostics(BaseModel):
+    routing: DeliberationV2RoutingDiagnostics
+    usage: DeliberationV2UsageDiagnostics
+    provider: str
+    model: str
+    quality_flags: DeliberationV2QualityFlags
+    quality_decision: Optional[DeliberationV2QualityDecision] = None
+
+
+class DeliberationV2Error(BaseModel):
+    code: str
+    message: str
+    details: Optional[Any] = None
+
+
+class DeliberationV2Response(BaseModel):
+    ok: bool
+    data: Optional[DeliberationV2Data] = None
+    meta: DeliberationV2Meta
+    diagnostics: Optional[DeliberationV2Diagnostics] = None
+    error: Optional[DeliberationV2Error] = None
+
+
+class CoreApiError(BaseModel):
+    code: str
+    message: str
+    details: Optional[Any] = None
+
+
+class CoreApiMeta(BaseModel):
+    trace_id: str
+    timestamp: str
+
+
+class CoreApiErrorResponse(BaseModel):
+    ok: bool = False
+    error: CoreApiError
+    meta: CoreApiMeta
 
 
 class ProjectCreateRequest(BaseModel):
@@ -265,8 +372,24 @@ async def rate_limit_middleware(request: Request, call_next):
             limiter = get_rate_limiter()
             await limiter.check_rate_limit(request)
         except HTTPException as e:
-            logger.warning(f"Rate limit exceeded for {request.client.host}")
-            raise e
+            trace_id = _get_or_create_trace_id(request)
+            client_host = request.client.host if request.client else "unknown"
+            logger.warning("[%s] Rate limit exceeded for %s", trace_id, client_host)
+            message = e.detail if isinstance(e.detail, str) else "Rate limit exceeded"
+            details = None if isinstance(e.detail, str) else e.detail
+            if _is_core_contract_path(request.url.path):
+                return _build_core_error_response(
+                    trace_id=trace_id,
+                    status_code=e.status_code,
+                    code="rate_limit",
+                    message=message,
+                    details=details,
+                )
+            return JSONResponse(
+                status_code=e.status_code,
+                content={"detail": e.detail},
+                headers={"X-Trace-Id": trace_id},
+            )
 
     response = await call_next(request)
     return response
@@ -276,13 +399,20 @@ async def rate_limit_middleware(request: Request, call_next):
 async def logging_middleware(request: Request, call_next):
     """Log all requests"""
     start_time = time.time()
+    trace_id = _get_or_create_trace_id(request)
 
-    logger.info(f"Request: {request.method} {request.url.path}")
+    logger.info("[%s] Request: %s %s", trace_id, request.method, request.url.path)
 
-    response = await call_next(request)
+    try:
+        response = await call_next(request)
+    except Exception:
+        duration = time.time() - start_time
+        logger.exception("[%s] Unhandled error after %.2fs", trace_id, duration)
+        raise
 
     duration = time.time() - start_time
-    logger.info(f"Response: {response.status_code} ({duration:.2f}s)")
+    response.headers.setdefault("X-Trace-Id", trace_id)
+    logger.info("[%s] Response: %s (%.2fs)", trace_id, response.status_code, duration)
 
     return response
 
@@ -302,8 +432,138 @@ def create_llm_provider(provider: str, model: str):
         return PerplexityProvider(model=model)
     elif provider == "custom":
         return CustomAPIProvider(model=model)
-    else:
+    elif provider == "gemini":
         return GeminiProvider(model=model)
+
+    raise HTTPException(
+        status_code=400,
+        detail=f"Unknown provider: {provider}",
+    )
+
+
+CORE_CONTRACT_PATH_PREFIXES = (
+    "/api/deliberate",
+    "/api/sessions",
+    "/api/share",
+    "/api/shared",
+)
+
+
+def _is_core_contract_path(path: str) -> bool:
+    return any(path == prefix or path.startswith(f"{prefix}/") for prefix in CORE_CONTRACT_PATH_PREFIXES)
+
+
+def _get_or_create_trace_id(request: Request) -> str:
+    trace_id = getattr(request.state, "trace_id", None)
+    if trace_id:
+        return trace_id
+    header_trace = request.headers.get("X-Trace-Id")
+    trace_id = header_trace.strip() if header_trace and header_trace.strip() else _generate_trace_id()
+    request.state.trace_id = trace_id
+    return trace_id
+
+
+def _map_http_status_to_error_code(status_code: int) -> str:
+    status_map = {
+        400: "bad_request",
+        401: "unauthorized",
+        403: "forbidden",
+        404: "not_found",
+        409: "conflict",
+        413: "payload_too_large",
+        422: "validation_error",
+        429: "rate_limit",
+        503: "service_unavailable",
+    }
+    if status_code in status_map:
+        return status_map[status_code]
+    if status_code >= 500:
+        return "internal_error"
+    return "bad_request"
+
+
+def _build_core_error_response(
+    *,
+    trace_id: str,
+    status_code: int,
+    code: str,
+    message: str,
+    details: Optional[Any] = None,
+    include_legacy_detail: bool = True,
+) -> JSONResponse:
+    payload = CoreApiErrorResponse(
+        ok=False,
+        error=CoreApiError(code=code, message=message, details=details),
+        meta=CoreApiMeta(trace_id=trace_id, timestamp=_now_iso_utc()),
+    ).model_dump(mode="json", exclude_none=True)
+    if include_legacy_detail:
+        payload["detail"] = message
+    return JSONResponse(
+        status_code=status_code,
+        content=payload,
+        headers={"X-Trace-Id": trace_id},
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def request_validation_exception_handler(request: Request, exc: RequestValidationError):
+    trace_id = _get_or_create_trace_id(request)
+    if _is_core_contract_path(request.url.path):
+        return _build_core_error_response(
+            trace_id=trace_id,
+            status_code=422,
+            code="validation_error",
+            message="Request validation failed",
+            details=exc.errors(),
+        )
+    return JSONResponse(
+        status_code=422,
+        content={"detail": exc.errors()},
+        headers={"X-Trace-Id": trace_id},
+    )
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    trace_id = _get_or_create_trace_id(request)
+    if isinstance(exc.detail, str):
+        message = exc.detail
+        details: Optional[Any] = None
+    else:
+        message = "Request failed"
+        details = exc.detail
+
+    if _is_core_contract_path(request.url.path):
+        return _build_core_error_response(
+            trace_id=trace_id,
+            status_code=exc.status_code,
+            code=_map_http_status_to_error_code(exc.status_code),
+            message=message,
+            details=details,
+        )
+
+    headers = dict(exc.headers or {})
+    headers.setdefault("X-Trace-Id", trace_id)
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail}, headers=headers)
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    trace_id = _get_or_create_trace_id(request)
+    logger.error("[%s] Unhandled exception at %s: %s", trace_id, request.url.path, exc, exc_info=True)
+    if _is_core_contract_path(request.url.path):
+        return _build_core_error_response(
+            trace_id=trace_id,
+            status_code=500,
+            code="internal_error",
+            message="Internal server error",
+            details=str(exc),
+        )
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error"},
+        headers={"X-Trace-Id": trace_id},
+    )
 
 
 # Static files
@@ -392,6 +652,15 @@ async def get_stats():
 @app.get("/api/providers")
 async def get_providers():
     """Get available LLM providers and models"""
+    openrouter_catalog = await fetch_openrouter_catalog_entries()
+    if not openrouter_catalog:
+        openrouter_models = list(OPENROUTER_MODELS_FALLBACK)
+        openrouter_catalog = [
+            {"id": m, "tier": openrouter_tier_for_row({"id": m, "pricing": {}})}
+            for m in openrouter_models
+        ]
+    else:
+        openrouter_models = [e["id"] for e in openrouter_catalog]
     return {
         "providers": AVAILABLE_PROVIDERS,
         "models": {
@@ -400,49 +669,141 @@ async def get_providers():
             "gemini": ["gemini-3-pro-preview", "gemini-3-flash-preview", "gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash-exp"],
             "deepseek": ["deepseek-chat", "deepseek-reasoner"],
             "perplexity": ["sonar", "sonar-pro", "sonar-reasoning"],
-            "openrouter": [
-                "google/gemini-3-pro-preview:free",
-                "google/gemini-2.0-flash-exp:free",
-                "anthropic/claude-3.5-sonnet",
-                "anthropic/claude-3-opus",
-                "meta-llama/llama-3.1-70b-instruct",
-                "meta-llama/llama-3.1-405b-instruct",
-                "mistralai/mistral-large-2407",
-                "microsoft/wizardlm-2-8x22b",
-                "qwen/qwen-2.5-72b-instruct"
-            ],
+            "openrouter": openrouter_models,
             "custom": ["local-model"]
-        }
+        },
+        "openrouter_catalog": openrouter_catalog,
     }
 
 
-@app.post("/api/deliberate", response_model=DeliberationResult)
-async def deliberate(request: Request):
-    """Run council deliberation with API key support"""
+def _generate_trace_id() -> str:
+    return uuid4().hex
 
-    # Parse and validate request
-    try:
-        data = await request.json()
-        validated = ValidatedQueryRequest(**data)
-    except ValidationError as e:
-        logger.error(f"Validation error: {e}")
-        raise HTTPException(status_code=422, detail=str(e))
-    except Exception as e:
-        logger.error(f"Request parsing error: {e}")
-        raise HTTPException(status_code=400, detail="Invalid request format")
 
-    # Get API keys from request state
-    api_keys = request.state.api_keys
+def _now_iso_utc() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
-    quality_or_hybrid = (
+
+def _is_quality_or_hybrid(
+    validated: ValidatedQueryRequest,
+    *,
+    resolved_critic: Optional[bool] = None,
+    resolved_weighted_voting: Optional[bool] = None,
+) -> bool:
+    critic_enabled = validated.enable_critic if resolved_critic is None else resolved_critic
+    weighted_enabled = (
+        validated.enable_weighted_voting
+        if resolved_weighted_voting is None
+        else resolved_weighted_voting
+    )
+    return (
         validated.behavior_preset != "default"
-        or validated.enable_critic
-        or validated.enable_weighted_voting
+        or critic_enabled
+        or weighted_enabled
         or validated.hybrid_search
     )
 
-    # Response cache (identical non-chat requests; Redis optional)
-    if not validated.chat_mode and not quality_or_hybrid:
+
+def _build_full_query(validated: ValidatedQueryRequest) -> str:
+    full_query = validated.query
+    if validated.attachment_text:
+        full_query = f"{validated.query}\n\n---\nATTACHMENT:\n{validated.attachment_text[:5000]}"
+    if validated.chat_mode and validated.history:
+        history_context = "\n\n---\nCHAT HISTORY:\n"
+        for item in validated.history[-3:]:
+            history_context += f"Q: {item.get('query', '')[:200]}\n"
+            if item.get("synthesis"):
+                history_context += f"A: {item['synthesis'][:300]}...\n\n"
+        full_query = history_context + "\n---\nCURRENT QUESTION:\n" + full_query
+    return full_query
+
+
+def _resolve_quality_decision(
+    validated: ValidatedQueryRequest,
+    full_query: str,
+) -> DeliberationV2QualityDecision:
+    decision: QualityDecision = evaluate_quality_mode(
+        quality_mode=validated.quality_mode,
+        query=validated.query,
+        full_query=full_query,
+        use_knowledge_base=validated.use_knowledge_base,
+        behavior_preset=validated.behavior_preset,
+        chat_mode=validated.chat_mode,
+        has_attachment=bool(validated.attachment_text),
+        manual_critic=validated.enable_critic,
+        manual_weighted_voting=validated.enable_weighted_voting,
+    )
+    return DeliberationV2QualityDecision(
+        mode=decision.mode,
+        applied_critic=decision.applied_critic,
+        applied_weighted_voting=decision.applied_weighted_voting,
+        reason=decision.reason,
+        risk_score=decision.risk_score,
+    )
+
+
+async def _parse_validated_deliberation_request(
+    request: Request,
+    trace_id: str,
+) -> ValidatedQueryRequest:
+    try:
+        data = await request.json()
+    except Exception as e:
+        logger.error("[%s] Request parsing error: %s", trace_id, e)
+        raise DeliberationApiException(
+            status_code=400,
+            code="validation_error",
+            message="Invalid request format",
+            details=str(e),
+        ) from e
+
+    try:
+        return ValidatedQueryRequest(**data)
+    except ValidationError as e:
+        logger.error("[%s] Validation error: %s", trace_id, e)
+        raise DeliberationApiException(
+            status_code=422,
+            code="validation_error",
+            message="Request validation failed",
+            details=e.errors(),
+        ) from e
+
+
+def _build_deliberation_result_from_cache(cached_raw: Dict[str, Any]) -> DeliberationResult:
+    return DeliberationResult(
+        query=cached_raw["query"],
+        timestamp=cached_raw["timestamp"],
+        agent_responses=[AgentResponseData(**a) for a in cached_raw["agent_responses"]],
+        synthesis=(
+            AgentResponseData(**cached_raw["synthesis"]) if cached_raw.get("synthesis") else None
+        ),
+        sources=[SourceData(**s) for s in cached_raw["sources"]],
+        total_agents=cached_raw["total_agents"],
+        usage=UsageData(**cached_raw.get("usage", {})),
+        session_id=cached_raw.get("session_id"),
+        routing_intent=cached_raw.get("routing_intent"),
+        behavior_preset=cached_raw.get("behavior_preset"),
+        critic_notes=cached_raw.get("critic_notes"),
+        agent_weights=cached_raw.get("agent_weights"),
+        quality_decision=cached_raw.get("quality_decision"),
+    )
+
+
+async def _run_deliberation_pipeline(
+    validated: ValidatedQueryRequest,
+    api_keys: Optional[str],
+    trace_id: str,
+) -> DeliberationResult:
+    full_query = _build_full_query(validated)
+    quality_decision = _resolve_quality_decision(validated, full_query)
+    quality_or_hybrid = _is_quality_or_hybrid(
+        validated,
+        resolved_critic=quality_decision.applied_critic,
+        resolved_weighted_voting=quality_decision.applied_weighted_voting,
+    )
+    cache_eligible = not validated.chat_mode and not quality_or_hybrid
+
+    if cache_eligible:
         cache = get_cache()
         if cache.enabled and not cache.client:
             await cache.connect()
@@ -456,56 +817,40 @@ async def deliberate(request: Request):
                     attachment_text=validated.attachment_text or "",
                 )
                 if cached_raw:
-                    return DeliberationResult(
-                        query=cached_raw["query"],
-                        timestamp=cached_raw["timestamp"],
-                        agent_responses=[
-                            AgentResponseData(**a) for a in cached_raw["agent_responses"]
-                        ],
-                        synthesis=(
-                            AgentResponseData(**cached_raw["synthesis"])
-                            if cached_raw.get("synthesis")
-                            else None
-                        ),
-                        sources=[SourceData(**s) for s in cached_raw["sources"]],
-                        total_agents=cached_raw["total_agents"],
-                        usage=UsageData(**cached_raw["usage"]),
-                    )
+                    logger.info("[%s] Deliberation cache hit", trace_id)
+                    return _build_deliberation_result_from_cache(cached_raw)
             except Exception as e:
-                logger.warning(f"Deliberation cache read skipped: {e}")
+                logger.warning("[%s] Deliberation cache read skipped: %s", trace_id, e)
 
-    # Build full query with attachment
-    full_query = validated.query
-    if validated.attachment_text:
-        full_query = f"{validated.query}\n\n---\n📎 ZAŁĄCZNIK:\n{validated.attachment_text[:5000]}"
-
-    # Add history context for chat mode
-    if validated.chat_mode and validated.history:
-        history_context = "\n\n---\n💬 POPRZEDNIA ROZMOWA:\n"
-        for item in validated.history[-3:]:
-            history_context += f"Q: {item.get('query', '')[:200]}\n"
-            if item.get('synthesis'):
-                history_context += f"A: {item['synthesis'][:300]}...\n\n"
-        full_query = history_context + "\n---\n📝 AKTUALNE PYTANIE:\n" + full_query
-
-    # Create LLM provider with API keys from localStorage or .env
     try:
         llm = APIKeyManager.create_provider_with_keys(
             provider_name=validated.provider,
             model=validated.model,
-            encoded_keys=api_keys
+            encoded_keys=api_keys,
         )
-        logger.info(f"Created provider: {validated.provider}/{validated.model}")
+        logger.info("[%s] Created provider: %s/%s", trace_id, validated.provider, validated.model)
     except Exception as e:
-        logger.error(f"Failed to create provider: {e}")
-        raise HTTPException(status_code=400, detail=f"Failed to create provider: {str(e)}")
+        logger.error("[%s] Failed to create provider: %s", trace_id, e)
+        raise DeliberationApiException(
+            status_code=400,
+            code="provider_error",
+            message=f"Failed to create provider: {str(e)}",
+            details=str(e),
+        ) from e
 
-    # Create agents with selected provider
-    routing_decision = route_query(full_query, validated.routing_mode)
-    agents = [agent_cls(llm) for agent_cls in routing_decision.agent_classes]
-    synthesizer = Synthesizer(llm)
+    try:
+        routing_decision = route_query(full_query, validated.routing_mode)
+        agents = [agent_cls(llm) for agent_cls in routing_decision.agent_classes]
+        synthesizer = Synthesizer(llm)
+    except Exception as e:
+        logger.error("[%s] Routing setup failed: %s", trace_id, e, exc_info=True)
+        raise DeliberationApiException(
+            status_code=500,
+            code="orchestration_error",
+            message=f"Routing setup failed: {str(e)}",
+            details=str(e),
+        ) from e
 
-    # Run deliberation (pass agents explicitly — no global registry pollution)
     try:
         council = Council(use_knowledge_base=validated.use_knowledge_base)
         result = await council.deliberate(
@@ -514,16 +859,25 @@ async def deliberate(request: Request):
             include_synthesis=True,
             llm=llm,
             behavior_preset=validated.behavior_preset,
-            enable_critic=validated.enable_critic,
-            enable_weighted_voting=validated.enable_weighted_voting,
+            enable_critic=quality_decision.applied_critic,
+            enable_weighted_voting=quality_decision.applied_weighted_voting,
             hybrid_search=validated.hybrid_search,
         )
-        logger.info(f"Deliberation completed: {result.usage.total_tokens} tokens, ${result.usage.total_cost:.4f}")
+        logger.info(
+            "[%s] Deliberation completed: %s tokens, $%.4f",
+            trace_id,
+            result.usage.total_tokens,
+            result.usage.total_cost,
+        )
     except Exception as e:
-        logger.error(f"Deliberation failed: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Deliberation failed: {str(e)}")
+        logger.error("[%s] Deliberation failed: %s", trace_id, e, exc_info=True)
+        raise DeliberationApiException(
+            status_code=500,
+            code="orchestration_error",
+            message=f"Deliberation failed: {str(e)}",
+            details=str(e),
+        ) from e
 
-    # Format response with token usage
     agent_responses = [
         AgentResponseData(
             agent_name=r.agent_name,
@@ -533,7 +887,7 @@ async def deliberate(request: Request):
             prompt_tokens=r.prompt_tokens,
             completion_tokens=r.completion_tokens,
             total_tokens=r.total_tokens,
-            model=r.model
+            model=r.model,
         )
         for r in result.agent_responses
     ]
@@ -548,7 +902,7 @@ async def deliberate(request: Request):
             prompt_tokens=result.synthesis.prompt_tokens,
             completion_tokens=result.synthesis.completion_tokens,
             total_tokens=result.synthesis.total_tokens,
-            model=result.synthesis.model
+            model=result.synthesis.model,
         )
 
     sources = [
@@ -556,17 +910,16 @@ async def deliberate(request: Request):
             title=s.get("title", "Unknown"),
             category=s.get("category", ""),
             max_score=s.get("max_score", 0),
-            emoji=get_category_emoji(s.get("category", ""))
+            emoji=get_category_emoji(s.get("category", "")),
         )
         for s in result.sources[:5]
     ]
 
-    # Build usage data from orchestrator's UsageStats
     usage = UsageData(
         prompt_tokens=result.usage.prompt_tokens,
         completion_tokens=result.usage.completion_tokens,
         total_tokens=result.usage.total_tokens,
-        total_cost=result.usage.total_cost
+        total_cost=result.usage.total_cost,
     )
 
     session_id_out: Optional[str] = None
@@ -579,7 +932,7 @@ async def deliberate(request: Request):
                 session_id=validated.session_id,
             )
         except Exception as e:
-            logger.warning(f"Session persist skipped: {e}")
+            logger.warning("[%s] Session persist skipped: %s", trace_id, e)
 
     deliberation_response = DeliberationResult(
         query=result.query,
@@ -594,9 +947,10 @@ async def deliberate(request: Request):
         behavior_preset=result.behavior_preset,
         critic_notes=result.critic_notes,
         agent_weights=result.agent_weights,
+        quality_decision=quality_decision.model_dump(mode="json"),
     )
 
-    if not validated.chat_mode and not quality_or_hybrid:
+    if cache_eligible:
         cache = get_cache()
         if cache.enabled and not cache.client:
             await cache.connect()
@@ -611,11 +965,137 @@ async def deliberate(request: Request):
                     attachment_text=validated.attachment_text or "",
                 )
             except Exception as e:
-                logger.warning(f"Deliberation cache write skipped: {e}")
+                logger.warning("[%s] Deliberation cache write skipped: %s", trace_id, e)
 
     return deliberation_response
 
 
+def _build_v2_success_payload(
+    deliberation_response: DeliberationResult,
+    validated: ValidatedQueryRequest,
+    trace_id: str,
+) -> DeliberationV2Response:
+    raw_quality = deliberation_response.quality_decision
+    if isinstance(raw_quality, DeliberationV2QualityDecision):
+        quality_decision = raw_quality
+    elif isinstance(raw_quality, dict):
+        quality_decision = DeliberationV2QualityDecision(**raw_quality)
+    else:
+        quality_decision = DeliberationV2QualityDecision(
+            mode=validated.quality_mode,
+            applied_critic=validated.enable_critic,
+            applied_weighted_voting=validated.enable_weighted_voting,
+            reason="quality_decision_unavailable",
+            risk_score=0.0,
+        )
+    return DeliberationV2Response(
+        ok=True,
+        data=DeliberationV2Data(
+            query=deliberation_response.query,
+            synthesis=deliberation_response.synthesis,
+            agent_responses=deliberation_response.agent_responses,
+            sources=deliberation_response.sources,
+            session_id=deliberation_response.session_id,
+        ),
+        meta=DeliberationV2Meta(
+            trace_id=trace_id,
+            timestamp=_now_iso_utc(),
+        ),
+        diagnostics=DeliberationV2Diagnostics(
+            routing=DeliberationV2RoutingDiagnostics(intent=deliberation_response.routing_intent),
+            usage=DeliberationV2UsageDiagnostics(
+                prompt_tokens=deliberation_response.usage.prompt_tokens,
+                completion_tokens=deliberation_response.usage.completion_tokens,
+                total_tokens=deliberation_response.usage.total_tokens,
+                total_cost=deliberation_response.usage.total_cost,
+            ),
+            provider=validated.provider,
+            model=validated.model,
+            quality_flags=DeliberationV2QualityFlags(
+                quality_mode=validated.quality_mode,
+                behavior_preset=validated.behavior_preset,
+                enable_critic=validated.enable_critic,
+                enable_weighted_voting=validated.enable_weighted_voting,
+                hybrid_search=validated.hybrid_search,
+            ),
+            quality_decision=quality_decision,
+        ),
+    )
+
+
+def _build_v2_error_response(
+    *,
+    trace_id: str,
+    status_code: int,
+    code: str,
+    message: str,
+    details: Optional[Any] = None,
+) -> JSONResponse:
+    payload = DeliberationV2Response(
+        ok=False,
+        meta=DeliberationV2Meta(
+            trace_id=trace_id,
+            timestamp=_now_iso_utc(),
+        ),
+        error=DeliberationV2Error(code=code, message=message, details=details),
+    )
+    return JSONResponse(
+        status_code=status_code,
+        content=payload.model_dump(mode="json", exclude_none=True),
+        headers={"X-Trace-Id": trace_id},
+    )
+
+
+@app.post("/api/deliberate", response_model=DeliberationResult)
+async def deliberate(request: Request, response: Response):
+    """Run v1 deliberation response contract."""
+    trace_id = _generate_trace_id()
+    response.headers["X-Trace-Id"] = trace_id
+
+    try:
+        validated = await _parse_validated_deliberation_request(request, trace_id)
+        api_keys = request.state.api_keys
+        return await _run_deliberation_pipeline(validated, api_keys, trace_id)
+    except DeliberationApiException as e:
+        logger.error("[%s] deliberate v1 failed (%s): %s", trace_id, e.code, e.message)
+        return _build_core_error_response(
+            trace_id=trace_id,
+            status_code=e.status_code,
+            code=e.code,
+            message=e.message,
+            details=e.details,
+        )
+
+
+@app.post("/api/deliberate/v2", response_model=DeliberationV2Response)
+async def deliberate_v2(request: Request, response: Response):
+    """Run v2 deliberation response contract with envelope + diagnostics."""
+    trace_id = _generate_trace_id()
+    response.headers["X-Trace-Id"] = trace_id
+
+    try:
+        validated = await _parse_validated_deliberation_request(request, trace_id)
+        api_keys = request.state.api_keys
+        deliberation_response = await _run_deliberation_pipeline(validated, api_keys, trace_id)
+        return _build_v2_success_payload(deliberation_response, validated, trace_id)
+    except DeliberationApiException as e:
+        logger.error("[%s] deliberate v2 failed (%s): %s", trace_id, e.code, e.message)
+        return _build_v2_error_response(
+            trace_id=trace_id,
+            status_code=e.status_code,
+            code=e.code,
+            message=e.message,
+            details=e.details,
+        )
+    except Exception as e:
+        logger.error("[%s] deliberate v2 internal error: %s", trace_id, e, exc_info=True)
+        return _build_v2_error_response(
+            trace_id=trace_id,
+            status_code=500,
+            code="internal_error",
+            message="Internal server error",
+            details=str(e),
+        )
 @app.post("/api/fast")
 async def fast_deliberate(request: Request):
     """
@@ -791,14 +1271,14 @@ async def shared_viewer_page(token: str):
     return HTMLResponse(
         f"""<!DOCTYPE html>
 <html lang="pl"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width"/>
-<title>Udostępniona narada</title>
+<title>UdostÄ™pniona narada</title>
 <style>
 body {{ font-family: system-ui, sans-serif; background:#111; color:#eee; padding:2rem; max-width:900px; margin:0 auto; }}
 pre {{ white-space:pre-wrap; background:#1a1a24; padding:1rem; border-radius:8px; }}
 h1 {{ font-size:1.25rem; }}
 a {{ color:#8b9cff; }}
 </style></head><body>
-<h1>Udostępniona narada</h1>
+<h1>UdostÄ™pniona narada</h1>
 <p id="err" class="hidden"></p>
 <div id="out">Ładowanie…</div>
 <script>
@@ -1167,7 +1647,7 @@ async def get_historical_agents():
 
 class HistoricalDeliberateRequest(BaseModel):
     query: str
-    agent_ids: List[str] = []  # Empty = all agents
+    agent_ids: List[str] = Field(default_factory=list)  # Empty = all agents
     provider: str = "openai"
     model: str = "gpt-4o"
     mode: str = "deliberate"  # "deliberate" or "debate"
@@ -1195,6 +1675,17 @@ async def historical_deliberate_stream(
     
     # Parse agent IDs
     ids = [a.strip() for a in agent_ids.split(",") if a.strip()] if agent_ids else None
+    if ids:
+        unknown_ids = [aid for aid in ids if aid not in HISTORICAL_AGENTS_INFO]
+        if unknown_ids:
+            unknown_list = ", ".join(unknown_ids)
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown historical agent IDs: {unknown_list}",
+            )
+
+    if mode not in {"deliberate", "debate"}:
+        raise HTTPException(status_code=400, detail=f"Unknown historical mode: {mode}")
     
     # Create LLM provider
     llm = create_llm_provider(provider, model)
@@ -1249,7 +1740,7 @@ async def council_mode_stream(
     """
     mode_instance = get_mode(mode)
     if not mode_instance:
-        return {"error": f"Unknown mode: {mode}"}
+        raise HTTPException(status_code=404, detail=f"Unknown mode: {mode}")
 
     # Create LLM provider
     llm = create_llm_provider(provider, model)
@@ -1943,4 +2434,7 @@ async def delete_seo_article(article_id: str):
 # ========== RUN ==========
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8501)
+
+    # Ten sam port co `uv run uvicorn main:app` / start.py (spójnie z dokumentacją).
+    uvicorn.run(app, host="0.0.0.0", port=8000)
+

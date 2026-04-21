@@ -30,6 +30,9 @@ let MODELS = {
 
 let AVAILABLE_PROVIDERS_LIST = ['openai', 'grok', 'gemini', 'deepseek', 'openrouter'];
 
+/** OpenRouter: [{ id, tier }, …] z /api/providers — do zakładek Free / Tanie / … */
+let OPENROUTER_CATALOG = [];
+
 const TOKEN_COSTS = {
     'gpt-4o': 0.005, 'gpt-4o-mini': 0.00015, 'gpt-4.1': 0.002, 'gpt-5': 0.01,
     'grok-2': 0.002, 'gemini-1.5-pro': 0.00125
@@ -37,6 +40,55 @@ const TOKEN_COSTS = {
 
 const SERVER_SESSION_ID_KEY = 'ai_council_server_session_id';
 const USER_SESSION_KEY = 'ai_council_user_session_token';
+const USE_DELIBERATE_V2 = false;
+const DELIBERATE_V2_STORAGE_KEY = 'ai_council_use_deliberate_v2';
+const DELIBERATE_V2_QUERY_PARAM = 'deliberate_v2';
+
+function parseRuntimeBooleanFlag(value) {
+    if (typeof value !== 'string') return null;
+    const normalized = value.trim().toLowerCase();
+    if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+    if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
+    return null;
+}
+
+function setDeliberateV2RuntimeFlag(enabled) {
+    try {
+        localStorage.setItem(DELIBERATE_V2_STORAGE_KEY, enabled ? '1' : '0');
+    } catch {
+        /* ignore */
+    }
+}
+
+function applyDeliberateV2QueryOverride() {
+    try {
+        const params = new URLSearchParams(window.location.search);
+        const queryFlag = parseRuntimeBooleanFlag(params.get(DELIBERATE_V2_QUERY_PARAM));
+        if (queryFlag !== null) {
+            setDeliberateV2RuntimeFlag(queryFlag);
+        }
+    } catch {
+        /* ignore */
+    }
+}
+
+function isDeliberateV2Enabled() {
+    applyDeliberateV2QueryOverride();
+
+    try {
+        const storedFlag = parseRuntimeBooleanFlag(localStorage.getItem(DELIBERATE_V2_STORAGE_KEY));
+        if (storedFlag !== null) return storedFlag;
+    } catch {
+        /* ignore */
+    }
+
+    return USE_DELIBERATE_V2;
+}
+
+if (typeof window !== 'undefined') {
+    window.setDeliberateV2 = (enabled) => setDeliberateV2RuntimeFlag(Boolean(enabled));
+    window.isDeliberateV2Enabled = () => isDeliberateV2Enabled();
+}
 
 function getUserSessionToken() {
     try {
@@ -81,6 +133,8 @@ function setStoredServerSessionId(id) {
 }
 
 function needsQualityDeliberationPath() {
+    const qualityMode = document.getElementById('quality-mode-select')?.value || 'auto';
+    if (qualityMode === 'auto' || qualityMode === 'max') return true;
     const p = document.getElementById('behavior-preset-select');
     const preset = p ? p.value : 'default';
     const critic = document.getElementById('critic-toggle')?.checked ?? false;
@@ -97,12 +151,14 @@ function buildDeliberateRequestExtras() {
     const sid = getStoredServerSessionId();
     const presetEl = document.getElementById('behavior-preset-select');
     const behavior_preset = presetEl ? presetEl.value : 'default';
+    const quality_mode = document.getElementById('quality-mode-select')?.value || 'auto';
     const enable_critic = document.getElementById('critic-toggle')?.checked ?? false;
     const enable_weighted_voting = document.getElementById('weighted-toggle')?.checked ?? false;
     const hybrid_search = document.getElementById('hybrid-kb-toggle')?.checked ?? false;
     return {
         routing_mode,
         persist_session,
+        quality_mode,
         behavior_preset,
         enable_critic,
         enable_weighted_voting,
@@ -182,6 +238,11 @@ class CustomSelect {
         this.icon = icon;
         this.align = align;
         this.isOpen = false;
+        /** OpenRouter: zakładki wg tier z API */
+        this._orTabsEnabled = false;
+        this._orTierById = new Map();
+        this._orActiveTier = 'all';
+        this._orTabsDelegateBound = false;
 
         this.init();
     }
@@ -234,14 +295,131 @@ class CustomSelect {
 
     setOptions(newOptions) {
         this.options = newOptions;
-        this.renderOptions(this.container.querySelector('.select-options-content'));
+        this._refreshDropdownList();
 
         // Check if current value exists in new options
         const allValues = this.getAllValues();
         if (!allValues.includes(this.value) && allValues.length > 0) {
-            this.setValue(allValues[0]);
+            // false: unikaj onChange → updateModels / setOptions w pętli (Maximum call stack)
+            this.setValue(allValues[0], false);
         }
         this.updateTrigger();
+    }
+
+    /**
+     * Włącza zakładki Free / Tanie / Standard / Premium dla listy modeli OpenRouter.
+     * Wywołaj po setOptions, gdy provider === openrouter.
+     */
+    configureOpenRouterTabs(enabled, catalog) {
+        this._orTabsEnabled = Boolean(enabled && catalog && catalog.length > 0);
+        this._orTierById = new Map();
+        if (catalog && catalog.length) {
+            for (const row of catalog) {
+                if (row && row.id) {
+                    this._orTierById.set(row.id, row.tier || 'standard');
+                }
+            }
+        }
+        this._orActiveTier = 'all';
+    }
+
+    _filteredOptionsForOpenRouterTier() {
+        if (!this._orTabsEnabled || this._orActiveTier === 'all') {
+            return null;
+        }
+        return this.options.filter(
+            (o) => (this._orTierById.get(o.value) || 'standard') === this._orActiveTier
+        );
+    }
+
+    _refreshDropdownList() {
+        const content = this.container?.querySelector('.select-options-content');
+        const tabsRoot = this.container?.querySelector('.openrouter-model-tabs');
+        if (!content) return;
+
+        if (!this._orTabsEnabled) {
+            if (tabsRoot) {
+                tabsRoot.classList.add('hidden');
+                tabsRoot.innerHTML = '';
+            }
+            content.classList.remove('max-h-[320px]');
+            content.classList.add('max-h-[400px]');
+            this.renderOptions(content, null);
+            return;
+        }
+
+        if (tabsRoot) {
+            tabsRoot.classList.remove('hidden');
+            content.classList.remove('max-h-[400px]');
+            content.classList.add('max-h-[320px]');
+            this._mountOpenRouterTabs(tabsRoot);
+        }
+        this.renderOptions(content, this._filteredOptionsForOpenRouterTier());
+    }
+
+    _orTabButtonClass(active) {
+        return `or-tab-btn rounded-md px-2 py-1 text-xs font-medium transition-colors whitespace-nowrap ${
+            active ? 'bg-primary/25 text-white' : 'text-text-secondary hover:bg-white/10 hover:text-white'
+        }`;
+    }
+
+    _syncOpenRouterTabButtonStyles(tabsRoot) {
+        tabsRoot.querySelectorAll('button.or-tab-btn[data-or-tier]').forEach((btn) => {
+            const t = btn.getAttribute('data-or-tier');
+            btn.className = this._orTabButtonClass(t === this._orActiveTier);
+        });
+    }
+
+    _mountOpenRouterTabs(tabsRoot) {
+        const tierOrder = ['all', 'free', 'cheap', 'standard', 'premium'];
+        const labels = {
+            all: 'Wszystkie',
+            free: 'Darmowe',
+            cheap: 'Tanie',
+            standard: 'Standard',
+            premium: 'Premium'
+        };
+        const countInTier = (t) => {
+            if (t === 'all') return this.options.length;
+            return this.options.filter(
+                (o) => (this._orTierById.get(o.value) || 'standard') === t
+            ).length;
+        };
+
+        tabsRoot.innerHTML = '';
+        const wrap = document.createElement('div');
+        wrap.className = 'flex flex-wrap gap-1 p-1.5';
+
+        for (const t of tierOrder) {
+            const n = countInTier(t);
+            if (t !== 'all' && n === 0) continue;
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = this._orTabButtonClass(this._orActiveTier === t);
+            btn.dataset.orTier = t;
+            btn.textContent = `${labels[t]} (${n})`;
+            wrap.appendChild(btn);
+        }
+        tabsRoot.appendChild(wrap);
+
+        if (!this._orTabsDelegateBound) {
+            this._orTabsDelegateBound = true;
+            tabsRoot.addEventListener('click', (e) => {
+                const btn = e.target && e.target.closest && e.target.closest('button.or-tab-btn[data-or-tier]');
+                if (!btn || !tabsRoot.contains(btn)) return;
+                e.preventDefault();
+                e.stopPropagation();
+                const t = btn.getAttribute('data-or-tier');
+                if (!t || t === this._orActiveTier) return;
+                this._orActiveTier = t;
+                this._syncOpenRouterTabButtonStyles(tabsRoot);
+                const content = this.container.querySelector('.select-options-content');
+                if (content) {
+                    content.scrollTop = 0;
+                    this.renderOptions(content, this._filteredOptionsForOpenRouterTier());
+                }
+            });
+        }
     }
 
     getAllValues() {
@@ -276,13 +454,14 @@ class CustomSelect {
                 <span class="value-display flex items-center gap-2 truncate"></span>
                 <span class="material-symbols-outlined text-lg opacity-50">expand_more</span>
             </button>
-            <div class="select-options hidden absolute top-full ${alignClass} min-w-full w-auto mt-1 bg-[#1a1f2e] border border-white/10 rounded-lg shadow-xl z-50 overflow-hidden backdrop-blur-xl animate-in fade-in zoom-in-95 duration-100">
-                <div class="select-options-content max-h-[400px] overflow-y-auto p-1 text-sm"></div>
+            <div class="select-options hidden absolute top-full ${alignClass} min-w-full w-auto mt-1 bg-[#1a1f2e] border border-white/10 rounded-lg shadow-xl z-50 overflow-hidden backdrop-blur-xl animate-in fade-in zoom-in-95 duration-100 flex flex-col">
+                <div class="openrouter-model-tabs hidden shrink-0 border-b border-white/10 bg-black/20"></div>
+                <div class="select-options-content max-h-[400px] overflow-y-auto p-1 text-sm min-h-0"></div>
             </div>
         `;
 
         this.updateTrigger();
-        this.renderOptions(this.container.querySelector('.select-options-content'));
+        this.renderOptions(this.container.querySelector('.select-options-content'), null);
 
         this.container.querySelector('.select-trigger').addEventListener('click', (e) => {
             e.preventDefault();
@@ -296,10 +475,19 @@ class CustomSelect {
         display.innerHTML = this.renderLabel(option);
     }
 
-    renderOptions(container) {
+    renderOptions(container, optionsSubset) {
         container.innerHTML = '';
+        const source = optionsSubset != null ? optionsSubset : this.options;
 
-        this.options.forEach(opt => {
+        if (source.length === 0) {
+            const empty = document.createElement('div');
+            empty.className = 'px-2 py-6 text-center text-xs text-text-secondary opacity-80';
+            empty.textContent = 'Brak modeli w tej kategorii.';
+            container.appendChild(empty);
+            return;
+        }
+
+        source.forEach(opt => {
             if (opt.group) {
                 const groupDiv = document.createElement('div');
                 groupDiv.className = 'py-1';
@@ -358,6 +546,11 @@ async function fetchProviders() {
         }
         if (data.models) {
             MODELS = data.models;
+        }
+        if (Array.isArray(data.openrouter_catalog)) {
+            OPENROUTER_CATALOG = data.openrouter_catalog;
+        } else {
+            OPENROUTER_CATALOG = [];
         }
     } catch (e) {
         console.error("Failed to fetch providers", e);
@@ -474,11 +667,76 @@ function setupEventListeners() {
             document.getElementById('temp-value').textContent = (e.target.value / 100).toFixed(1);
         });
     }
+
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') closeMobileNav();
+    });
+
+    window.addEventListener('resize', () => {
+        if (window.innerWidth >= 768) closeMobileNav();
+    });
 }
 
 // ========== NAVIGATION ==========
+function closeMobileNav() {
+    const panel = document.getElementById('mobile-nav');
+    const btn = document.getElementById('mobile-menu-btn');
+    if (panel && !panel.classList.contains('hidden')) {
+        panel.classList.add('hidden');
+    }
+    document.body.classList.remove('mobile-nav-open');
+    if (btn) btn.setAttribute('aria-expanded', 'false');
+}
+
+function toggleMobileMenu() {
+    const panel = document.getElementById('mobile-nav');
+    const btn = document.getElementById('mobile-menu-btn');
+    if (!panel) return;
+    const opening = panel.classList.contains('hidden');
+    if (opening) {
+        panel.classList.remove('hidden');
+        document.body.classList.add('mobile-nav-open');
+        if (btn) btn.setAttribute('aria-expanded', 'true');
+    } else {
+        closeMobileNav();
+    }
+}
+
+function showQualityDecisionBadge(decision) {
+    const el = document.getElementById('quality-decision-badge');
+    if (!el) return;
+    if (!decision || !decision.mode) {
+        hideQualityDecisionBadge();
+        return;
+    }
+
+    const reason = (decision.reason || '').trim();
+    const shortReason = reason ? `${reason.slice(0, 72)}${reason.length > 72 ? '...' : ''}` : '';
+    const applied = Boolean(decision.applied_critic || decision.applied_weighted_voting);
+    if (decision.mode === 'auto' && applied) {
+        el.textContent = shortReason ? `Quality Auto Applied: ${shortReason}` : 'Quality Auto Applied';
+        el.classList.remove('hidden');
+        return;
+    }
+    if (decision.mode === 'max') {
+        el.textContent = 'Quality Max Applied';
+        el.classList.remove('hidden');
+        return;
+    }
+    hideQualityDecisionBadge();
+}
+
+function hideQualityDecisionBadge() {
+    const el = document.getElementById('quality-decision-badge');
+    if (el) {
+        el.classList.add('hidden');
+        el.textContent = '';
+    }
+}
+
 function navigateTo(page) {
     currentPage = page;
+    closeMobileNav();
 
     // Hide all pages
     document.querySelectorAll('.page-content').forEach(p => p.classList.add('hidden'));
@@ -490,10 +748,12 @@ function navigateTo(page) {
     // Update nav links
     document.querySelectorAll('.nav-link').forEach(link => {
         const isActive = link.dataset.page === page;
+        if (isActive) link.setAttribute('aria-current', 'page');
+        else link.removeAttribute('aria-current');
         link.classList.toggle('bg-primary/10', isActive);
         link.classList.toggle('text-primary', isActive);
         link.classList.toggle('dark:text-white', isActive);
-        link.classList.toggle('font-medium', isActive);
+        link.classList.toggle('font-semibold', isActive);
         link.classList.toggle('text-slate-600', !isActive);
         link.classList.toggle('dark:text-text-secondary', !isActive);
         link.classList.toggle('hover:bg-slate-100', !isActive);
@@ -772,6 +1032,7 @@ function togglePasswordVisibility(inputId) {
 let currentSettingsTab = 'dashboard';
 
 function openSettingsPanel() {
+    closeMobileNav();
     const panel = document.getElementById('settings-panel');
     if (panel) {
         panel.classList.remove('hidden');
@@ -956,6 +1217,10 @@ function updateModels() {
 
     if (modelSelectInstance) {
         const options = models.map(m => ({ value: m, label: m }));
+        modelSelectInstance.configureOpenRouterTabs(
+            currentProvider === 'openrouter',
+            OPENROUTER_CATALOG
+        );
         modelSelectInstance.setOptions(options);
 
         // Always set to first model when switching providers
@@ -1022,6 +1287,7 @@ async function handleSubmit(e) {
     if (!query) return;
 
     hideRoutingIntentBadge();
+    hideQualityDecisionBadge();
 
     // Cancel any existing stream
     if (streamingEventSource) {
@@ -1051,6 +1317,7 @@ async function handleSubmit(e) {
                 agent_responses: payload.agent_responses || [],
                 synthesis: payload.synthesis || null,
                 sources: payload.sources || [],
+                quality_decision: payload.quality_decision || null,
             };
             if (payload.session_id) setStoredServerSessionId(payload.session_id);
             if (payload.routing_intent) showRoutingIntentBadge(payload.routing_intent, '');
@@ -1068,6 +1335,7 @@ async function handleSubmit(e) {
             showWelcome();
         }
     } else {
+        hideQualityDecisionBadge();
         deliberateStream(query);
     }
 
@@ -1669,27 +1937,117 @@ function showExportButton() {
     resultsArea.appendChild(container);
 }
 
-// Keep original deliberate for fallback/non-streaming mode
+function withTimeoutSignal(timeoutMs) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    return { controller, timeoutId };
+}
+
+async function postDeliberation(path, requestPayload, timeoutMs = 60000) {
+    const { controller, timeoutId } = withTimeoutSignal(timeoutMs);
+    try {
+        const response = await fetch(path, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(requestPayload),
+            signal: controller.signal,
+        });
+
+        const raw = await response.text();
+        let payload = null;
+        try {
+            payload = raw ? JSON.parse(raw) : null;
+        } catch {
+            payload = null;
+        }
+
+        if (!response.ok) {
+            const message = payload?.error?.message || payload?.detail || 'API Error';
+            const error = new Error(message);
+            error.httpStatus = response.status;
+            error.payload = payload;
+            throw error;
+        }
+
+        return payload;
+    } finally {
+        clearTimeout(timeoutId);
+    }
+}
+
+function normalizeDeliberateV2Payload(v2Payload) {
+    const data = v2Payload?.data || {};
+    const diagnostics = v2Payload?.diagnostics || {};
+    const usage = diagnostics?.usage || {
+        prompt_tokens: 0,
+        completion_tokens: 0,
+        total_tokens: 0,
+        total_cost: 0,
+    };
+
+    const agentResponses = Array.isArray(data.agent_responses) ? data.agent_responses : [];
+    const synthesis = data.synthesis || null;
+
+    return {
+        query: data.query || '',
+        timestamp: v2Payload?.meta?.timestamp || new Date().toISOString(),
+        agent_responses: agentResponses,
+        synthesis,
+        sources: Array.isArray(data.sources) ? data.sources : [],
+        total_agents: agentResponses.length + (synthesis ? 1 : 0),
+        usage,
+        session_id: data.session_id || null,
+        routing_intent: diagnostics?.routing?.intent || null,
+        behavior_preset: diagnostics?.quality_flags?.behavior_preset || 'default',
+        quality_mode: diagnostics?.quality_flags?.quality_mode || 'auto',
+        critic_notes: null,
+        agent_weights: null,
+        quality_decision: diagnostics?.quality_decision || null,
+    };
+}
+
+function shouldFallbackToDeliberateV1(error) {
+    if (error?.name === 'AbortError') return true;
+    const status = error?.httpStatus;
+    return status === 404 || status >= 500;
+}
+
+// Keep deliberate() output backward-compatible for current UI usage.
 async function deliberate(query) {
     const chatToggleEl = document.getElementById('chat-toggle');
     const useChatMode = chatToggleEl ? chatToggleEl.checked : false;
+    const requestPayload = {
+        query,
+        provider: currentProvider,
+        model: currentModel,
+        use_knowledge_base: kbToggle?.checked ?? true,
+        chat_mode: useChatMode,
+        attachment_text: attachmentText,
+        history: useChatMode ? history.slice(-3) : [],
+        ...buildDeliberateRequestExtras(),
+    };
 
-    const response = await fetch('/api/deliberate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            query,
-            provider: currentProvider,
-            model: currentModel,
-            use_knowledge_base: kbToggle?.checked ?? true,
-            chat_mode: useChatMode,
-            attachment_text: attachmentText,
-            history: useChatMode ? history.slice(-3) : [],
-            ...buildDeliberateRequestExtras(),
-        })
-    });
-    if (!response.ok) throw new Error((await response.json()).detail || 'API Error');
-    const payload = await response.json();
+    if (isDeliberateV2Enabled()) {
+        try {
+            const v2Payload = await postDeliberation('/api/deliberate/v2', requestPayload);
+            if (v2Payload?.ok === false) {
+                const message = v2Payload?.error?.message || 'API Error';
+                const error = new Error(message);
+                error.httpStatus = 500;
+                error.payload = v2Payload;
+                throw error;
+            }
+            const normalized = normalizeDeliberateV2Payload(v2Payload);
+            if (normalized.session_id) setStoredServerSessionId(normalized.session_id);
+            if (normalized.routing_intent) showRoutingIntentBadge(normalized.routing_intent, '');
+            return normalized;
+        } catch (error) {
+            if (!shouldFallbackToDeliberateV1(error)) throw error;
+            console.warn('Falling back to /api/deliberate v1:', error);
+        }
+    }
+
+    const payload = await postDeliberation('/api/deliberate', requestPayload);
     if (payload.session_id) setStoredServerSessionId(payload.session_id);
     if (payload.routing_intent) showRoutingIntentBadge(payload.routing_intent, '');
     return payload;
@@ -2137,6 +2495,7 @@ function showWelcome() {
     loadingState?.classList.add('hidden');
     resultsContent?.classList.add('hidden');
     queryDisplay?.classList.add('hidden');
+    hideQualityDecisionBadge();
 }
 
 function showLoading() {
@@ -2162,6 +2521,7 @@ function showResults() {
 // ========== RENDER RESULTS ==========
 function renderResults(result) {
     showResults();
+    showQualityDecisionBadge(result?.quality_decision || null);
     const agents = result.agent_responses || [];
     const hasSynthesis = !!result.synthesis;
 

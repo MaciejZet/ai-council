@@ -6,15 +6,125 @@ Z obsługą zwracania usage (tokeny) i retry logic
 """
 
 import os
+import time
 from abc import ABC, abstractmethod
 from typing import Optional, Tuple, Dict, Any, AsyncGenerator, List
 from dataclasses import dataclass
 from dotenv import load_dotenv
 
+import httpx
+
 # Import retry decorators
 from src.utils.error_handler import retry_with_backoff, timeout
 
 load_dotenv()
+
+# Krótka lista gdy katalog OpenRouter jest niedostępny (sieć, timeout).
+OPENROUTER_MODELS_FALLBACK: List[str] = [
+    "google/gemini-3-pro-preview:free",
+    "google/gemini-2.0-flash-exp:free",
+    "anthropic/claude-3.5-sonnet",
+    "anthropic/claude-3-opus",
+    "meta-llama/llama-3.1-70b-instruct",
+    "meta-llama/llama-3.1-405b-instruct",
+    "mistralai/mistral-large-2407",
+    "microsoft/wizardlm-2-8x22b",
+    "qwen/qwen-2.5-72b-instruct",
+]
+
+_openrouter_catalog_cache: Dict[str, tuple[float, List[Dict[str, str]], float]] = {}
+_OPENROUTER_CATALOG_TTL_SEC = 300.0
+_OPENROUTER_CATALOG_FAILURE_TTL_SEC = 30.0
+_OPENROUTER_CATALOG_TIMEOUT_SEC = 8.0
+
+
+def _parse_openrouter_price(value: Any) -> float:
+    """OpenRouter zwraca ceny za token jako string lub liczbę."""
+    if value is None:
+        return 0.0
+    if isinstance(value, (int, float)):
+        return max(0.0, float(value))
+    s = str(value).strip()
+    if not s or s == "0":
+        return 0.0
+    try:
+        return max(0.0, float(s))
+    except ValueError:
+        return 0.0
+
+
+def openrouter_tier_for_row(row: dict) -> str:
+    """
+    Kategoria UI: free | cheap | standard | premium wg id (:free) i pricing.prompt/completion (USD / token).
+    """
+    mid = str(row.get("id") or "").strip().lower()
+    if ":free" in mid:
+        return "free"
+    pricing = row.get("pricing") if isinstance(row.get("pricing"), dict) else {}
+    raw_p = pricing.get("prompt")
+    raw_c = pricing.get("completion")
+    has_any = raw_p is not None or raw_c is not None
+    pin = _parse_openrouter_price(raw_p)
+    pout = _parse_openrouter_price(raw_c)
+    mx = max(pin, pout)
+    if not has_any:
+        return "standard"
+    if mx <= 0:
+        return "free"
+    per_1m = mx * 1_000_000
+    if per_1m < 0.35:
+        return "cheap"
+    if per_1m < 4.0:
+        return "standard"
+    return "premium"
+
+
+async def fetch_openrouter_catalog_entries(
+    base_url: Optional[str] = None, *, use_cache: bool = True
+) -> List[Dict[str, str]]:
+    """
+    Katalog OpenRouter: id + tier (do zakładek w UI).
+    GET /v1/models — bez klucza API.
+    """
+    root = (base_url or os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")).rstrip("/")
+    models_url = f"{root}/models"
+    now = time.monotonic()
+
+    if use_cache and root in _openrouter_catalog_cache:
+        ts, cached, ttl = _openrouter_catalog_cache[root]
+        if now - ts < ttl:
+            return [dict(x) for x in cached]
+
+    try:
+        timeout = httpx.Timeout(_OPENROUTER_CATALOG_TIMEOUT_SEC, connect=3.0)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.get(models_url)
+            response.raise_for_status()
+            payload = response.json()
+    except Exception:
+        if use_cache:
+            _openrouter_catalog_cache[root] = (now, [], _OPENROUTER_CATALOG_FAILURE_TTL_SEC)
+        return []
+
+    rows = payload.get("data") or []
+    by_id: Dict[str, str] = {}
+    for row in rows:
+        if not isinstance(row, dict) or not row.get("id"):
+            continue
+        model_id = str(row["id"]).strip()
+        by_id[model_id] = openrouter_tier_for_row(row)
+    out: List[Dict[str, str]] = [{"id": i, "tier": by_id[i]} for i in sorted(by_id)]
+    if use_cache:
+        _openrouter_catalog_cache[root] = (now, out, _OPENROUTER_CATALOG_TTL_SEC)
+    return [dict(x) for x in out]
+
+
+async def fetch_openrouter_model_ids(
+    base_url: Optional[str] = None, *, use_cache: bool = True
+) -> List[str]:
+    """Posortowane id modeli OpenRouter (jak wcześniej)."""
+    entries = await fetch_openrouter_catalog_entries(base_url, use_cache=use_cache)
+    return [e["id"] for e in entries]
 
 
 @dataclass
@@ -419,11 +529,13 @@ class OpenRouterProvider(LLMProvider):
 
     def __init__(self, model: str = "google/gemini-2.0-flash-exp:free", base_url: Optional[str] = None, api_key: Optional[str] = None):
         from openai import AsyncOpenAI
+        resolved_base = base_url or os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
         self.client = AsyncOpenAI(
             api_key=api_key or os.getenv("OPENROUTER_API_KEY", "dummy"),
-            base_url=base_url or os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
+            base_url=resolved_base,
         )
         self.model = model
+        self._openrouter_base_url = resolved_base
     
     async def generate(self, system_prompt: str, user_prompt: str, temperature: float = 0.7, max_tokens: Optional[int] = None) -> LLMResponse:
         # OpenRouter often requires 'referer' and 'title' headers, 
@@ -487,12 +599,9 @@ class OpenRouterProvider(LLMProvider):
                 yield chunk.choices[0].delta.content
 
     async def get_available_models(self) -> List[str]:
-        """Zwraca listę modeli dostępnych w OpenRouter"""
-        try:
-            response = await self.client.models.list()
-            return [model.id for model in response.data]
-        except Exception:
-            return []
+        """Zwraca listę modeli dostępnych w OpenRouter (pełny katalog z API)."""
+        models = await fetch_openrouter_model_ids(self._openrouter_base_url)
+        return models if models else list(OPENROUTER_MODELS_FALLBACK)
 
 
 def get_provider(provider_name: Optional[str] = None, model: Optional[str] = None) -> LLMProvider:

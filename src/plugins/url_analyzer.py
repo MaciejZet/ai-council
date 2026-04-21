@@ -10,7 +10,7 @@ import re
 from typing import Any, Dict, List, Optional
 
 import httpx
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 from src.plugins import BasePlugin, PluginResult
 
@@ -204,18 +204,20 @@ class URLAnalyzerPlugin(BasePlugin):
             text = match.group(2).strip()
             
             # Skip puste i anchor linki
-            if not href or href.startswith('#') or href.startswith('javascript:'):
+            if not href:
                 continue
-            
-            # Absolutne URL
-            if href.startswith('/'):
-                parsed = urlparse(base_url)
-                href = f"{parsed.scheme}://{parsed.netloc}{href}"
-            elif not href.startswith('http'):
+
+            href_lower = href.lower()
+            if href.startswith("#") or href_lower.startswith("javascript:"):
+                continue
+
+            absolute_url = urljoin(base_url, href)
+            parsed_url = urlparse(absolute_url)
+            if parsed_url.scheme not in ("http", "https"):
                 continue
             
             if text and len(text) > 2:
-                links.append({"url": href, "text": text[:100]})
+                links.append({"url": absolute_url, "text": text[:100]})
         
         return links
     

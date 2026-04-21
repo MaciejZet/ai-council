@@ -5,10 +5,25 @@ Universal provider for any OpenAI-compatible API (LM Studio, Ollama, vLLM, etc.)
 """
 
 import os
+import logging
 from typing import Optional, AsyncGenerator
 from openai import AsyncOpenAI
 
 from src.llm_providers import LLMProvider, LLMResponse
+
+logger = logging.getLogger(__name__)
+
+
+def _debug_enabled() -> bool:
+    return os.getenv("AI_COUNCIL_DEBUG_CUSTOM_PROVIDER", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _redact_secret(secret: Optional[str]) -> str:
+    if not secret:
+        return "<missing>"
+    if len(secret) <= 6:
+        return "***"
+    return f"{secret[:3]}***{secret[-2:]}"
 
 
 class CustomAPIProvider(LLMProvider):
@@ -41,13 +56,13 @@ class CustomAPIProvider(LLMProvider):
         self.base_url = base_url or os.getenv("CUSTOM_BASE_URL", "http://localhost:1234/v1")
         self.api_key = api_key or os.getenv("CUSTOM_API_KEY", "dummy")
 
-        # Debug to file
-        with open('debug_api_keys.txt', 'a', encoding='utf-8') as f:
-            f.write(f"\n=== CustomAPIProvider.__init__ ===\n")
-            f.write(f"  model: {self.model}\n")
-            f.write(f"  base_url: {self.base_url}\n")
-            f.write(f"  api_key: {self.api_key[:20]}..." if self.api_key and len(self.api_key) > 20 else f"  api_key: {self.api_key}\n")
-            f.write(f"===================================\n")
+        if _debug_enabled():
+            logger.debug(
+                "CustomAPIProvider init model=%s base_url=%s api_key=%s",
+                self.model,
+                self.base_url,
+                _redact_secret(self.api_key),
+            )
 
         self.client = AsyncOpenAI(
             api_key=self.api_key,
@@ -62,12 +77,8 @@ class CustomAPIProvider(LLMProvider):
         max_tokens: Optional[int] = None
     ) -> LLMResponse:
         """Generate response from custom API"""
-        import logging
-        logger = logging.getLogger(__name__)
-
-        logger.info(f"CustomAPIProvider - Base URL: {self.base_url}")
-        logger.info(f"CustomAPIProvider - Model: {self.model}")
-        logger.info(f"CustomAPIProvider - API Key: {self.api_key[:10]}..." if self.api_key else "No API key")
+        if _debug_enabled():
+            logger.debug("CustomAPIProvider generate base_url=%s model=%s", self.base_url, self.model)
 
         try:
             response = await self.client.chat.completions.create(
@@ -80,7 +91,7 @@ class CustomAPIProvider(LLMProvider):
                 max_tokens=max_tokens
             )
         except Exception as e:
-            logger.error(f"CustomAPIProvider error: {str(e)}")
+            logger.error("CustomAPIProvider error: %s", str(e))
             raise
 
         usage = response.usage
@@ -104,13 +115,8 @@ class CustomAPIProvider(LLMProvider):
         max_tokens: Optional[int] = None
     ) -> AsyncGenerator[str, None]:
         """Stream tokens from custom API"""
-        # Debug to file
-        with open('debug_api_keys.txt', 'a', encoding='utf-8') as f:
-            f.write(f"\n=== CustomAPIProvider.generate_stream ===\n")
-            f.write(f"  base_url: {self.base_url}\n")
-            f.write(f"  model: {self.model}\n")
-            f.write(f"  api_key: {self.api_key[:20]}..." if self.api_key and len(self.api_key) > 20 else f"  api_key: {self.api_key}\n")
-            f.write(f"=========================================\n")
+        if _debug_enabled():
+            logger.debug("CustomAPIProvider stream base_url=%s model=%s", self.base_url, self.model)
 
         try:
             response = await self.client.chat.completions.create(
@@ -124,11 +130,7 @@ class CustomAPIProvider(LLMProvider):
                 stream=True
             )
         except Exception as e:
-            with open('debug_api_keys.txt', 'a', encoding='utf-8') as f:
-                f.write(f"\n!!! ERROR in generate_stream !!!\n")
-                f.write(f"  Error: {str(e)}\n")
-                f.write(f"  Type: {type(e).__name__}\n")
-                f.write(f"!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n")
+            logger.error("CustomAPIProvider stream error (%s): %s", type(e).__name__, str(e))
             raise
 
         async for chunk in response:

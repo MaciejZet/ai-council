@@ -27,60 +27,55 @@
 
 ## Quick Start
 
-### 🚀 Najszybsza metoda (ZALECANA):
+### Domyślna ścieżka: uv + uvicorn
+
+Zależności są w **`pyproject.toml`**, zablokowane w **`uv.lock`**. Narzędzia developerskie (pytest, ruff, …) w grupie **`dev`**.
 
 ```bash
-# 1. Zainstaluj zależności
-pip install -r requirements.txt
-
-# 2. Dodaj API keys do .env (zamień dummy-key na prawdziwe)
-# Plik .env już istnieje - edytuj go!
-
-# 3. Uruchom smart starter
-python start.py
-# lub na Windows: start.bat
-# lub na Linux/Mac: ./start.sh
-```
-
-**Smart starter automatycznie:**
-- ✅ Sprawdzi czy wszystko działa
-- ✅ Pokaże co trzeba naprawić
-- ✅ Uruchomi serwer FastAPI
-
-Application available at: **http://localhost:8000**
-
-### Option 2: With uv (recommended — lockfile + fast installs)
-
-Dependencies are resolved in **`pyproject.toml`** and pinned in **`uv.lock`**. Dev tools (pytest, ruff, …) are in the **`dev`** extra.
-
-```bash
-# 1. Install uv (if needed)
+# 1. Zainstaluj uv (jeśli brak)
 # Windows: powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
 # macOS/Linux: curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# 2. One-shot: sync venv from lock + run (see start-uv scripts)
-# Windows
-start-uv.bat
-# macOS/Linux
-chmod +x start-uv.sh && ./start-uv.sh
-
-# Or manually:
+# 2. Środowisko i pakiety
 uv sync --extra dev
+
+# 3. Skopiuj .env (jeśli trzeba) i uzupełnij klucze API
+# cp .env.example .env
+
+# 4. Uruchom (sprawdza setup + uv run uvicorn)
+uv run python start.py
+```
+
+Albo skróty (sync + opcjonalnie testy + serwer):
+
+- **Windows:** `start.bat` lub `start-uv.bat`
+- **Linux/macOS:** `./start.sh` lub `./start-uv.sh`
+
+Bezpośrednio serwer:
+
+```bash
 uv run uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-### Option 3: Manual (Traditional)
+Aplikacja: **http://localhost:8000**
+
+### Pip (bez uv)
 
 ```bash
-# 1. Install dependencies
 pip install -r requirements.txt
-
-# 2. Check setup
 python check_setup.py
-
-# 3. Run server
-python main.py
+python start.py
 ```
+
+(`requirements.txt` jest lustrzany; w rozwoju zalecane jest `uv sync`.)
+
+### Tylko `python main.py`
+
+```bash
+uv run python main.py
+```
+
+Uruchamia wbudowany `uvicorn` na porcie **8000** (zgodnie z powyższym).
 
 ## Key Features
 

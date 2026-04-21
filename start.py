@@ -4,8 +4,9 @@
 Smart Starter - Sprawdza setup i uruchamia aplikację
 """
 
-import sys
+import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 # Fix Windows console encoding
@@ -14,23 +15,50 @@ if sys.platform == "win32":
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
 
-def run_checks():
-    """Uruchom check_setup.py"""
+def run_checks() -> bool:
+    """Uruchom check_setup.py (przez uv run, gdy dostepne)."""
     print("[CHECK] Sprawdzanie konfiguracji...\n")
-    result = subprocess.run([sys.executable, "check_setup.py"], capture_output=False)
+    uv_bin = shutil.which("uv")
+    cmd: list[str] = [uv_bin, "run", "python", "check_setup.py"] if uv_bin else [sys.executable, "check_setup.py"]
+    result = subprocess.run(cmd, capture_output=False)
     return result.returncode == 0
 
-def start_server():
-    """Uruchom serwer FastAPI"""
+def start_server() -> None:
+    """Uruchom serwer FastAPI przez uv (preferowane) lub uvicorn z bieżącego interpretera."""
     print("\n[START] Uruchamianie AI Council...\n")
-    try:
-        subprocess.run([
-            sys.executable, "-m", "uvicorn",
+    uv_bin = shutil.which("uv")
+    cmd: list[str]
+    if uv_bin:
+        cmd = [
+            uv_bin,
+            "run",
+            "uvicorn",
             "main:app",
-            "--host", "0.0.0.0",
-            "--port", "8000",
-            "--reload"
-        ])
+            "--host",
+            "0.0.0.0",
+            "--port",
+            "8000",
+            "--reload",
+        ]
+    else:
+        print(
+            "[!] Brak polecenia `uv`. Zainstaluj: https://docs.astral.sh/uv/\n"
+            "    Nastepnie: uv sync --extra dev\n"
+            "    Uzywam: python -m uvicorn (niezalecane w tym repo).\n"
+        )
+        cmd = [
+            sys.executable,
+            "-m",
+            "uvicorn",
+            "main:app",
+            "--host",
+            "0.0.0.0",
+            "--port",
+            "8000",
+            "--reload",
+        ]
+    try:
+        subprocess.run(cmd, check=False)
     except KeyboardInterrupt:
         print("\n\n[STOP] Zamykanie serwera...")
 

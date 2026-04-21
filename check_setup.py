@@ -17,8 +17,8 @@ if sys.platform == "win32":
 def check_python_version():
     """Sprawdź wersję Pythona"""
     version = sys.version_info
-    if version.major < 3 or (version.major == 3 and version.minor < 10):
-        print("[X] Python 3.10+ wymagany")
+    if version.major < 3 or (version.major == 3 and version.minor < 12):
+        print("[X] Python 3.12+ wymagany (zgodnie z pyproject.toml)")
         return False
     print(f"[OK] Python {version.major}.{version.minor}.{version.micro}")
     return True
@@ -46,7 +46,8 @@ def check_dependencies():
 
     if missing:
         print(f"\n[X] Brakujace pakiety: {', '.join(missing)}")
-        print("Zainstaluj: pip install -r requirements.txt")
+        print("Zainstaluj (zalecane): uv sync --extra dev")
+        print("Alternatywa: pip install -e .")
         return False
 
     return True
@@ -108,7 +109,7 @@ def main():
 
     print("\n" + "="*50)
     if all(results):
-        print("[OK] Wszystko OK! Mozesz uruchomic: python start.py")
+        print("[OK] Wszystko OK! Uruchom: uv run python start.py   lub: python start.py")
         return 0
     else:
         print("[ERROR] Napraw bledy przed uruchomieniem")

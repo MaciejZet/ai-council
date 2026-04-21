@@ -35,3 +35,6 @@ jobs:
 
       - name: Pytest
         run: uv run pytest tests/ -v --tb=short --no-cov
+
+      - name: Quality soft gate (deterministic)
+        run: uv run python tests/quality_gate.py

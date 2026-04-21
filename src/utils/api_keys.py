@@ -4,10 +4,11 @@ API Key Management
 Manages API keys from localStorage instead of .env files
 """
 
-from typing import Dict, Optional
-from fastapi import HTTPException, Header
-import json
 import base64
+import json
+from typing import Dict, Optional
+
+from fastapi import HTTPException, Header
 
 
 class APIKeyManager:
@@ -29,14 +30,27 @@ class APIKeyManager:
 
         try:
             # Decode from base64
-            decoded = base64.b64decode(encoded_keys).decode('utf-8')
+            decoded = base64.b64decode(encoded_keys, validate=True).decode("utf-8")
             keys = json.loads(decoded)
-            return keys
+            if not isinstance(keys, dict):
+                raise ValueError("Decoded API keys must be a JSON object")
+
+            sanitized: Dict[str, str] = {}
+            for name, value in keys.items():
+                if not isinstance(name, str):
+                    raise ValueError("API key names must be strings")
+                if value is None:
+                    continue
+                if not isinstance(value, str):
+                    raise ValueError(f"API key '{name}' must be a string")
+                sanitized[name] = value
+
+            return sanitized
         except Exception as e:
             raise HTTPException(
                 status_code=400,
                 detail=f"Invalid API keys format: {str(e)}"
-            )
+            ) from e
 
     @staticmethod
     def get_api_key(

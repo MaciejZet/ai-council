@@ -31,7 +31,10 @@ SUSPICIOUS_PATTERNS = [
 class QueryRequest(BaseModel):
     """Validated query request"""
     query: str = Field(..., min_length=1, max_length=MAX_QUERY_LENGTH)
-    provider: str = Field(default="openai", pattern="^(openai|grok|gemini|deepseek|perplexity|openrouter)$")
+    provider: str = Field(
+        default="openai",
+        pattern="^(openai|grok|gemini|deepseek|perplexity|openrouter|custom)$",
+    )
     model: str = Field(default="gpt-4o", min_length=1, max_length=100)
     use_knowledge_base: bool = Field(default=True)
     chat_mode: bool = Field(default=False)
@@ -50,6 +53,7 @@ class QueryRequest(BaseModel):
     enable_critic: bool = Field(default=False)
     enable_weighted_voting: bool = Field(default=False)
     hybrid_search: bool = Field(default=False)
+    quality_mode: str = Field(default="auto", pattern="^(off|auto|max)$")
 
     @field_validator("query")
     @classmethod
