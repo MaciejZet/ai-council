@@ -212,5 +212,8 @@ def get_cache() -> ResponseCache:
     """Get or create the global cache instance"""
     global _cache_instance
     if _cache_instance is None:
-        _cache_instance = ResponseCache()
+        # Make Redis caching opt-in: enable only when REDIS_URL is explicitly set.
+        # This matches the .env/.env.example guidance and avoids noisy startup warnings
+        # for users who don't run Redis locally.
+        _cache_instance = ResponseCache(enabled=bool(os.getenv("REDIS_URL")))
     return _cache_instance

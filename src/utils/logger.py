@@ -61,6 +61,8 @@ def setup_logger(
     """
     logger = logging.getLogger(name)
     logger.setLevel(level)
+    # Prevent double-logging via root/uvicorn handlers
+    logger.propagate = False
 
     # Avoid duplicate handlers
     if logger.handlers:

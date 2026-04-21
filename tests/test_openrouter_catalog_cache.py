@@ -99,6 +99,7 @@ def test_openrouter_tier_for_row_free_suffix_and_pricing():
         == "free"
     )
     assert openrouter_tier_for_row({"id": "unknown", "pricing": {}}) == "standard"
+    assert openrouter_tier_for_row({"id": "vendor/llama-8b-free", "pricing": {}}) == "free"
     assert (
         openrouter_tier_for_row(
             {"id": "cheap", "pricing": {"prompt": "0.0000001", "completion": "0.0000001"}}

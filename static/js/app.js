@@ -33,6 +33,37 @@ let AVAILABLE_PROVIDERS_LIST = ['openai', 'grok', 'gemini', 'deepseek', 'openrou
 /** OpenRouter: [{ id, tier }, …] z /api/providers — do zakładek Free / Tanie / … */
 let OPENROUTER_CATALOG = [];
 
+/**
+ * Preferowana kolejność darmowych modeli (zsynchronizowane z OPENROUTER_MODELS_FALLBACK w backendzie).
+ */
+const PREFERRED_OPENROUTER_FREE_MODEL_IDS = [
+    'google/gemini-3-pro-preview:free',
+    'google/gemini-2.0-flash-exp:free',
+];
+
+/**
+ * Domyślny model przy wyborze OpenRouter: preferowana lista free, potem tier z katalogu,
+ * potem ":free" w id, na końcu models[0] (alfabetycznie pierwszy — zwykle nie darmowy).
+ */
+function pickDefaultOpenRouterModel(models) {
+    if (!models || !models.length) return null;
+    const tierById = new Map();
+    if (OPENROUTER_CATALOG && OPENROUTER_CATALOG.length) {
+        for (const row of OPENROUTER_CATALOG) {
+            if (row && row.id) tierById.set(row.id, row.tier || 'standard');
+        }
+    }
+    for (const preferred of PREFERRED_OPENROUTER_FREE_MODEL_IDS) {
+        if (models.includes(preferred)) return preferred;
+    }
+    for (const id of models) {
+        if (tierById.get(id) === 'free') return id;
+    }
+    const byFreeMarker = models.find((m) => String(m).toLowerCase().includes(':free'));
+    if (byFreeMarker) return byFreeMarker;
+    return models[0];
+}
+
 const TOKEN_COSTS = {
     'gpt-4o': 0.005, 'gpt-4o-mini': 0.00015, 'gpt-4.1': 0.002, 'gpt-5': 0.01,
     'grok-2': 0.002, 'gemini-1.5-pro': 0.00125
@@ -978,10 +1009,6 @@ function saveSettings() {
 
     updateModels();
 
-    if (typeof modelSelectInstance !== 'undefined' && modelSelectInstance) {
-        modelSelectInstance.setValue(currentModel, false);
-    }
-
     if (kbToggle) kbToggle.checked = settings.kbDefault;
 }
 
@@ -1223,9 +1250,17 @@ function updateModels() {
         );
         modelSelectInstance.setOptions(options);
 
-        // Always set to first model when switching providers
+        // Domyślny model przy wejściu na OpenRouter lub gdy zapisany model nie istnieje na liście.
         if (models.length > 0) {
-            currentModel = models[0];
+            if (currentProvider === 'openrouter') {
+                const keep =
+                    currentModel && models.includes(currentModel)
+                        ? currentModel
+                        : pickDefaultOpenRouterModel(models);
+                currentModel = keep;
+            } else {
+                currentModel = models[0];
+            }
             modelSelectInstance.setValue(currentModel, false); // Don't trigger change callback to avoid loop
             localStorage.setItem('ai_council_last_model', currentModel);
             console.log(`Model updated to: ${currentModel}`);
@@ -1233,11 +1268,21 @@ function updateModels() {
     }
 }
 
+/**
+ * Dopasowanie wysokości textarea do treści.
+ * Zmiana height w tym samym stacku co `input` potrafi w niektórych przeglądarkach
+ * wywołać kolejne `input` synchronicznie → przepełnienie stosu. Odroczenie na rAF
+ * przerywa ten łańcuch (jedna aktualizacja layoutu na klatkę).
+ */
+let autoResizeRafId = null;
 function autoResize() {
-    if (queryInput) {
+    if (!queryInput) return;
+    if (autoResizeRafId != null) cancelAnimationFrame(autoResizeRafId);
+    autoResizeRafId = requestAnimationFrame(() => {
+        autoResizeRafId = null;
         queryInput.style.height = 'auto';
-        queryInput.style.height = Math.min(queryInput.scrollHeight, 200) + 'px';
-    }
+        queryInput.style.height = `${Math.min(queryInput.scrollHeight, 200)}px`;
+    });
 }
 
 // ========== FILE HANDLING ==========
