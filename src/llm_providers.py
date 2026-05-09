@@ -68,6 +68,9 @@ def openrouter_tier_for_row(row: dict) -> str:
     pout = _parse_openrouter_price(raw_c)
     mx = max(pin, pout)
     if not has_any:
+        # OpenRouter często nie wysyła pricing; darmowe warianty bywają oznaczone sufiksem -free w id.
+        if mid.endswith("-free") or mid.endswith("/free"):
+            return "free"
         return "standard"
     if mx <= 0:
         return "free"

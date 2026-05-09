@@ -33,6 +33,37 @@ let AVAILABLE_PROVIDERS_LIST = ['openai', 'grok', 'gemini', 'deepseek', 'openrou
 /** OpenRouter: [{ id, tier }, …] z /api/providers — do zakładek Free / Tanie / … */
 let OPENROUTER_CATALOG = [];
 
+/**
+ * Preferowana kolejność darmowych modeli (zsynchronizowane z OPENROUTER_MODELS_FALLBACK w backendzie).
+ */
+const PREFERRED_OPENROUTER_FREE_MODEL_IDS = [
+    'google/gemini-3-pro-preview:free',
+    'google/gemini-2.0-flash-exp:free',
+];
+
+/**
+ * Domyślny model przy wyborze OpenRouter: preferowana lista free, potem tier z katalogu,
+ * potem ":free" w id, na końcu models[0] (alfabetycznie pierwszy — zwykle nie darmowy).
+ */
+function pickDefaultOpenRouterModel(models) {
+    if (!models || !models.length) return null;
+    const tierById = new Map();
+    if (OPENROUTER_CATALOG && OPENROUTER_CATALOG.length) {
+        for (const row of OPENROUTER_CATALOG) {
+            if (row && row.id) tierById.set(row.id, row.tier || 'standard');
+        }
+    }
+    for (const preferred of PREFERRED_OPENROUTER_FREE_MODEL_IDS) {
+        if (models.includes(preferred)) return preferred;
+    }
+    for (const id of models) {
+        if (tierById.get(id) === 'free') return id;
+    }
+    const byFreeMarker = models.find((m) => String(m).toLowerCase().includes(':free'));
+    if (byFreeMarker) return byFreeMarker;
+    return models[0];
+}
+
 const TOKEN_COSTS = {
     'gpt-4o': 0.005, 'gpt-4o-mini': 0.00015, 'gpt-4.1': 0.002, 'gpt-5': 0.01,
     'grok-2': 0.002, 'gemini-1.5-pro': 0.00125
@@ -87,7 +118,10 @@ function isDeliberateV2Enabled() {
 
 if (typeof window !== 'undefined') {
     window.setDeliberateV2 = (enabled) => setDeliberateV2RuntimeFlag(Boolean(enabled));
-    window.isDeliberateV2Enabled = () => isDeliberateV2Enabled();
+    // Avoid self-recursion in the global scope: in browsers, a global function declaration
+    // also creates a writable `window.<name>` binding. Wrapping it in an arrow and assigning
+    // back to `window.isDeliberateV2Enabled` makes the identifier resolve to itself.
+    window.isDeliberateV2Enabled = isDeliberateV2Enabled;
 }
 
 function getUserSessionToken() {
@@ -189,6 +223,7 @@ function hideRoutingIntentBadge() {
 }
 
 const AGENT_COLORS = {
+    'Asystent': { bg: 'bg-teal-500/10', text: 'text-teal-400', icon: 'chat', color: '#2dd4bf' },
     // Core agents
     'Strateg': { bg: 'bg-blue-500/10', text: 'text-blue-500', icon: 'chess', color: '#3b82f6' },
     'Analityk': { bg: 'bg-green-500/10', text: 'text-green-500', icon: 'analytics', color: '#22c55e' },
@@ -562,6 +597,7 @@ function initCustomSelects() {
     const modeOptions = [
         {
             group: 'Podstawowe', options: [
+                { value: 'chatbot', label: 'Chatbot', emoji: '💬' },
                 { value: 'council', label: 'Narada', emoji: '🏛️' },
                 { value: 'debate', label: 'Debata', emoji: '⚔️' },
                 { value: 'mentors', label: 'Ikony & Mentorzy', emoji: '🌟' }
@@ -978,10 +1014,6 @@ function saveSettings() {
 
     updateModels();
 
-    if (typeof modelSelectInstance !== 'undefined' && modelSelectInstance) {
-        modelSelectInstance.setValue(currentModel, false);
-    }
-
     if (kbToggle) kbToggle.checked = settings.kbDefault;
 }
 
@@ -1223,9 +1255,17 @@ function updateModels() {
         );
         modelSelectInstance.setOptions(options);
 
-        // Always set to first model when switching providers
+        // Domyślny model przy wejściu na OpenRouter lub gdy zapisany model nie istnieje na liście.
         if (models.length > 0) {
-            currentModel = models[0];
+            if (currentProvider === 'openrouter') {
+                const keep =
+                    currentModel && models.includes(currentModel)
+                        ? currentModel
+                        : pickDefaultOpenRouterModel(models);
+                currentModel = keep;
+            } else {
+                currentModel = models[0];
+            }
             modelSelectInstance.setValue(currentModel, false); // Don't trigger change callback to avoid loop
             localStorage.setItem('ai_council_last_model', currentModel);
             console.log(`Model updated to: ${currentModel}`);
@@ -1233,11 +1273,21 @@ function updateModels() {
     }
 }
 
+/**
+ * Dopasowanie wysokości textarea do treści.
+ * Zmiana height w tym samym stacku co `input` potrafi w niektórych przeglądarkach
+ * wywołać kolejne `input` synchronicznie → przepełnienie stosu. Odroczenie na rAF
+ * przerywa ten łańcuch (jedna aktualizacja layoutu na klatkę).
+ */
+let autoResizeRafId = null;
 function autoResize() {
-    if (queryInput) {
+    if (!queryInput) return;
+    if (autoResizeRafId != null) cancelAnimationFrame(autoResizeRafId);
+    autoResizeRafId = requestAnimationFrame(() => {
+        autoResizeRafId = null;
         queryInput.style.height = 'auto';
-        queryInput.style.height = Math.min(queryInput.scrollHeight, 200) + 'px';
-    }
+        queryInput.style.height = `${Math.min(queryInput.scrollHeight, 200)}px`;
+    });
 }
 
 // ========== FILE HANDLING ==========
@@ -1307,6 +1357,8 @@ async function handleSubmit(e) {
         mentorsStream(query);
     } else if (currentMode === 'debate') {
         debateStream(query);
+    } else if (currentMode === 'chatbot') {
+        runChatbotQuery(query);
     } else if (currentMode === 'council' && needsQualityDeliberationPath()) {
         showLoading();
         try {
@@ -1343,6 +1395,78 @@ async function handleSubmit(e) {
     attachmentText = '';
     fileIndicator.classList.add('hidden');
     autoResize();
+}
+
+async function runChatbotQuery(query) {
+    showLoading();
+    hideQualityDecisionBadge();
+    hideRoutingIntentBadge();
+    try {
+        const response = await fetch('/api/fast', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                query,
+                provider: currentProvider,
+                model: currentModel,
+                use_knowledge_base: kbToggle?.checked ?? true,
+                chat_mode: true,
+                history: history.slice(-10),
+                attachment_text: attachmentText || '',
+            }),
+        });
+        const raw = await response.text();
+        let data = null;
+        try {
+            data = raw ? JSON.parse(raw) : null;
+        } catch {
+            data = null;
+        }
+        if (!response.ok) {
+            const detail = data?.detail;
+            const message =
+                typeof detail === 'string'
+                    ? detail
+                    : Array.isArray(detail)
+                        ? detail.map((d) => d.msg || JSON.stringify(d)).join('; ')
+                        : data?.message || 'Błąd chatbota';
+            throw new Error(message);
+        }
+        const text = data.response || '';
+        lastResult = {
+            query: data.query || query,
+            timestamp: new Date().toISOString(),
+            agent_responses: [
+                {
+                    agent_name: '💬 Asystent',
+                    role: 'Chatbot (szybki)',
+                    content: text,
+                    provider_used: data.provider || `${currentProvider} (${currentModel})`,
+                },
+            ],
+            synthesis: null,
+            sources: [],
+        };
+        renderResults(lastResult);
+        history.push({
+            query: lastResult.query,
+            synthesis: text,
+            timestamp: lastResult.timestamp,
+        });
+        storeSessionForExport(
+            queryText.textContent,
+            [{ agent: 'Asystent', emoji: '💬', role: 'Chatbot (szybki)', content: text }],
+            null,
+            'chatbot'
+        );
+        showExportButton();
+        saveCurrentSession(queryText.textContent);
+        showToast('Odpowiedź gotowa', 'success');
+    } catch (err) {
+        console.error(err);
+        showToast(err.message || 'Błąd chatbota', 'error');
+        showWelcome();
+    }
 }
 
 // ========== ADVANCED MODES (SWOT, Deep Dive, etc.) ==========
@@ -2373,7 +2497,7 @@ function toggleDebateMode() {
     setMode(debateMode ? 'council' : 'debate');
 }
 
-let currentMode = 'council'; // 'council', 'debate', 'mentors'
+let currentMode = 'council'; // 'chatbot', 'council', 'debate', 'mentors'
 let selectedMentors = []; // Selected mentor IDs for mentors mode
 
 function setMode(mode) {
@@ -2388,6 +2512,7 @@ function setMode(mode) {
     // Update header text
     const headerTitle = document.getElementById('main-title');
     const titles = {
+        'chatbot': '💬 Chatbot',
         'council': '🏛️ Narada Rady AI',
         'debate': '⚔️ Debata Rady AI',
         'mentors': '🌟 Ikony & Mentorzy',
@@ -2728,16 +2853,83 @@ function loadSessions() {
 }
 
 function saveCurrentSession(query) {
+    const maxLen = 12000;
+    const truncateText = (value, limit = maxLen) => {
+        const s = value == null ? '' : String(value);
+        return s.length > limit ? s.slice(0, limit) + '…' : s;
+    };
+
+    const buildStorableResult = (result) => {
+        if (!result) return null;
+        const synthesis = result.synthesis
+            ? {
+                agent_name: truncateText(result.synthesis.agent_name, 120),
+                role: truncateText(result.synthesis.role, 120),
+                content: truncateText(result.synthesis.content, maxLen),
+                provider_used: truncateText(result.synthesis.provider_used, 200),
+            }
+            : null;
+
+        const agent_responses = Array.isArray(result.agent_responses)
+            ? result.agent_responses.map((r) => ({
+                agent_name: truncateText(r.agent_name, 120),
+                role: truncateText(r.role, 120),
+                content: truncateText(r.content, maxLen),
+                provider_used: truncateText(r.provider_used, 200),
+            }))
+            : [];
+
+        const sources = Array.isArray(result.sources)
+            ? result.sources.map((s) => ({
+                title: truncateText(s.title, 200),
+                category: truncateText(s.category, 80),
+                emoji: truncateText(s.emoji, 10),
+                max_score: typeof s.max_score === 'number' ? s.max_score : 0,
+            }))
+            : [];
+
+        return {
+            query: truncateText(result.query, 4000),
+            timestamp: truncateText(result.timestamp, 64),
+            agent_responses,
+            synthesis,
+            sources,
+            quality_decision: result.quality_decision || null,
+        };
+    };
+
     const session = {
         id: Date.now(),
         title: query.slice(0, 50) + (query.length > 50 ? '...' : ''),
         timestamp: new Date().toISOString(),
         history: [...history],
-        lastResult: lastResult
+        lastResult: buildStorableResult(lastResult),
     };
     sessions.unshift(session);
     sessions = sessions.slice(0, 20);
-    localStorage.setItem('ai_council_sessions', JSON.stringify(sessions));
+    try {
+        localStorage.setItem('ai_council_sessions', JSON.stringify(sessions));
+    } catch (e) {
+        console.warn('Failed to persist sessions, falling back to lightweight save:', e);
+        try {
+            const lightweight = sessions.map((s) => ({
+                id: s.id,
+                title: s.title,
+                timestamp: s.timestamp,
+                history: Array.isArray(s.history) ? s.history.slice(-10).map((h) => ({
+                    query: truncateText(h?.query, 2000),
+                    synthesis: truncateText(h?.synthesis, 6000),
+                    timestamp: truncateText(h?.timestamp, 64),
+                })) : [],
+                lastResult: null,
+            }));
+            localStorage.setItem('ai_council_sessions', JSON.stringify(lightweight));
+            showToast('Sesja zbyt duża do zapisu lokalnego — zapisano wersję uproszczoną.', 'info');
+        } catch (e2) {
+            console.warn('Lightweight session persist failed:', e2);
+            showToast('Nie udało się zapisać sesji lokalnie (localStorage).', 'error');
+        }
+    }
     currentSessionId = session.id;
     renderSessions();
 }
