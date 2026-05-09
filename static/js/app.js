@@ -223,6 +223,7 @@ function hideRoutingIntentBadge() {
 }
 
 const AGENT_COLORS = {
+    'Asystent': { bg: 'bg-teal-500/10', text: 'text-teal-400', icon: 'chat', color: '#2dd4bf' },
     // Core agents
     'Strateg': { bg: 'bg-blue-500/10', text: 'text-blue-500', icon: 'chess', color: '#3b82f6' },
     'Analityk': { bg: 'bg-green-500/10', text: 'text-green-500', icon: 'analytics', color: '#22c55e' },
@@ -596,6 +597,7 @@ function initCustomSelects() {
     const modeOptions = [
         {
             group: 'Podstawowe', options: [
+                { value: 'chatbot', label: 'Chatbot', emoji: '💬' },
                 { value: 'council', label: 'Narada', emoji: '🏛️' },
                 { value: 'debate', label: 'Debata', emoji: '⚔️' },
                 { value: 'mentors', label: 'Ikony & Mentorzy', emoji: '🌟' }
@@ -1355,6 +1357,8 @@ async function handleSubmit(e) {
         mentorsStream(query);
     } else if (currentMode === 'debate') {
         debateStream(query);
+    } else if (currentMode === 'chatbot') {
+        runChatbotQuery(query);
     } else if (currentMode === 'council' && needsQualityDeliberationPath()) {
         showLoading();
         try {
@@ -1391,6 +1395,78 @@ async function handleSubmit(e) {
     attachmentText = '';
     fileIndicator.classList.add('hidden');
     autoResize();
+}
+
+async function runChatbotQuery(query) {
+    showLoading();
+    hideQualityDecisionBadge();
+    hideRoutingIntentBadge();
+    try {
+        const response = await fetch('/api/fast', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                query,
+                provider: currentProvider,
+                model: currentModel,
+                use_knowledge_base: kbToggle?.checked ?? true,
+                chat_mode: true,
+                history: history.slice(-10),
+                attachment_text: attachmentText || '',
+            }),
+        });
+        const raw = await response.text();
+        let data = null;
+        try {
+            data = raw ? JSON.parse(raw) : null;
+        } catch {
+            data = null;
+        }
+        if (!response.ok) {
+            const detail = data?.detail;
+            const message =
+                typeof detail === 'string'
+                    ? detail
+                    : Array.isArray(detail)
+                        ? detail.map((d) => d.msg || JSON.stringify(d)).join('; ')
+                        : data?.message || 'Błąd chatbota';
+            throw new Error(message);
+        }
+        const text = data.response || '';
+        lastResult = {
+            query: data.query || query,
+            timestamp: new Date().toISOString(),
+            agent_responses: [
+                {
+                    agent_name: '💬 Asystent',
+                    role: 'Chatbot (szybki)',
+                    content: text,
+                    provider_used: data.provider || `${currentProvider} (${currentModel})`,
+                },
+            ],
+            synthesis: null,
+            sources: [],
+        };
+        renderResults(lastResult);
+        history.push({
+            query: lastResult.query,
+            synthesis: text,
+            timestamp: lastResult.timestamp,
+        });
+        storeSessionForExport(
+            queryText.textContent,
+            [{ agent: 'Asystent', emoji: '💬', role: 'Chatbot (szybki)', content: text }],
+            null,
+            'chatbot'
+        );
+        showExportButton();
+        saveCurrentSession(queryText.textContent);
+        showToast('Odpowiedź gotowa', 'success');
+    } catch (err) {
+        console.error(err);
+        showToast(err.message || 'Błąd chatbota', 'error');
+        showWelcome();
+    }
 }
 
 // ========== ADVANCED MODES (SWOT, Deep Dive, etc.) ==========
@@ -2421,7 +2497,7 @@ function toggleDebateMode() {
     setMode(debateMode ? 'council' : 'debate');
 }
 
-let currentMode = 'council'; // 'council', 'debate', 'mentors'
+let currentMode = 'council'; // 'chatbot', 'council', 'debate', 'mentors'
 let selectedMentors = []; // Selected mentor IDs for mentors mode
 
 function setMode(mode) {
@@ -2436,6 +2512,7 @@ function setMode(mode) {
     // Update header text
     const headerTitle = document.getElementById('main-title');
     const titles = {
+        'chatbot': '💬 Chatbot',
         'council': '🏛️ Narada Rady AI',
         'debate': '⚔️ Debata Rady AI',
         'mentors': '🌟 Ikony & Mentorzy',

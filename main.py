@@ -1134,9 +1134,10 @@ async def fast_deliberate(request: Request):
         except Exception as e:
             logger.warning(f"Knowledge base query failed: {e}")
 
-    # Fast response - only 1 agent
+    # Fast response - only 1 agent (optional chat history via _build_full_query)
+    full_query = _build_full_query(validated)
     try:
-        response = await fast_response(validated.query, llm, context)
+        response = await fast_response(full_query, llm, context)
         logger.info(f"Fast mode completed: {response.total_tokens} tokens")
     except Exception as e:
         logger.error(f"Fast mode failed: {e}", exc_info=True)
