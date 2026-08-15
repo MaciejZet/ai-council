@@ -188,8 +188,9 @@ async def test_rebuttals_begin_after_blind_round_and_only_then_see_peer_memos():
     assert last_blind < first_rebuttal
 
     for call in (item for item in llm.calls if item["stage"] == "REBUTTAL"):
-        assert "PEER_MEMO_SENTINEL_" in call["user"]
-        assert f"PEER_MEMO_SENTINEL_{call['expert_id']}" not in call["user"]
+        peer_section = call["user"].split("Peer blind memos:", 1)[1]
+        assert "PEER_MEMO_SENTINEL_" in peer_section
+        assert f"PEER_MEMO_SENTINEL_{call['expert_id']}" not in peer_section
 
 
 @pytest.mark.asyncio
