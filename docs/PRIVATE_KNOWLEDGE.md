@@ -61,6 +61,8 @@ Do not commit this file when it contains real Drive IDs.
 
 Supported private source types are `book`, `summary`, `personal_note`, `synthesis`, `internal_doc`, `article`, `web`, `notion`, and `file`.
 
+The allowlist is the authorization boundary and source of truth. When a previously synchronized file is removed from the allowlist, the next non-dry-run sync deletes that document's private vectors and removes it from local sync state. If deletion fails, state is retained so a later sync can retry instead of silently forgetting the stale vectors.
+
 ## 2. Configure read-only Drive access
 
 Use Google Application Default Credentials or another ADC-compatible credential outside the repository. The Drive adapter requests only:
@@ -90,7 +92,7 @@ PRIVATE_KNOWLEDGE_DEBUG_TITLES=false
 uv run python scripts/sync_private_knowledge.py --dry-run
 ```
 
-Dry-run mode enumerates allowlisted records and reports counts. It does not download source content, create embeddings, write sync state, or mutate Pinecone.
+Dry-run mode enumerates allowlisted records and reports counts. It does not download source content, create embeddings, prune removed sources, write sync state, or mutate Pinecone.
 
 ## 4. Run the sync
 
@@ -108,7 +110,9 @@ For each new or changed source, the sync:
 6. deletes older vector versions only after the new upsert succeeds;
 7. updates local sync state atomically.
 
-Unchanged sources are skipped before their content is downloaded.
+If a multi-batch upsert fails after one or more batches were written, the sync attempts to remove only the incomplete new content version and leaves the previous version intact. If cleanup itself is unavailable, the sync still reports failure and does not advance local state.
+
+Unchanged sources are skipped before their content is downloaded. Sources no longer present in the allowlist are pruned from the private namespace before changed sources are processed.
 
 ## State and logs
 
