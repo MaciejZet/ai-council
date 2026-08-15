@@ -230,14 +230,9 @@ CI should use synthetic knowledge fixtures. CI must not require Drive or Pinecon
 
 ## Logging, cache and observability
 
-Retrieved private text must not be written to normal application logs. Logs may record:
+Retrieved private text must not be written to normal application logs. Normal retrieval logs should use an opaque `doc_id`, retrieval score, chunk number, token counts, timing and error metadata. Source titles are disabled in logs by default and may appear only in an explicitly enabled local diagnostic mode.
 
-- document ID;
-- source title if acceptable;
-- retrieval score;
-- chunk number;
-- token counts;
-- timing and error metadata.
+User-facing Council output may cite source titles when provenance is useful, but it should not reproduce long source passages.
 
 Redis or other caches can contain model responses that indirectly reflect private context. Production deployments should therefore treat response caches as private application data, give them an explicit TTL and never serialize them into repository artifacts.
 
