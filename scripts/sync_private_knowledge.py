@@ -28,6 +28,7 @@ def main() -> int:
                 "scanned": report.scanned,
                 "skipped": report.skipped,
                 "updated": report.updated,
+                "deleted": report.deleted,
                 "failed": report.failed,
                 "failed_doc_ids": report.failed_doc_ids,
             },
