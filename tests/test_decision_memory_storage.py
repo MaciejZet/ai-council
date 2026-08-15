@@ -1,3 +1,4 @@
+import importlib
 import json
 import sqlite3
 
@@ -14,7 +15,9 @@ from src.council.council_os_models import (
     Rebuttal,
     RedTeamReport,
 )
-from src.storage.decision_memory import DecisionMemoryStore
+
+decision_memory = importlib.import_module("src.storage.decision_memory")
+DecisionMemoryStore = decision_memory.DecisionMemoryStore
 
 PRIVATE_SENTINEL = "PRIVATE_SYNTHETIC_CHUNK"
 
