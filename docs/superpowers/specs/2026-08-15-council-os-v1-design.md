@@ -111,6 +111,7 @@ It does not contain another expert's memo, consensus, routing score, Chairman pr
 Each `ExpertMemo` contains:
 
 - `expert_id`
+- `vote`: `GO`, `NO-GO`, `TEST`, or `DEFER`
 - `recommendation`
 - `confidence` in `[0, 1]`
 - `claims`, each labeled `F`, `A`, `I`, `FMW`, or `O`
@@ -118,6 +119,8 @@ Each `ExpertMemo` contains:
 - `risks`
 - `what_changes_my_mind`
 - `knowledge_status`
+
+The explicit `vote` is the deterministic signal used to measure early directional consensus. Free-form recommendation text is never used to calculate the >80% threshold.
 
 Claim labels mean:
 
@@ -136,10 +139,10 @@ After all blind memos exist, each domain expert gets a compact view of the other
 - strongest agreement;
 - strongest disagreement;
 - assumption to test;
-- whether its recommendation changed;
+- `revised_vote`: `GO`, `NO-GO`, `TEST`, or `DEFER`;
 - revised confidence.
 
-The rebuttal phase is the first point where domain experts can see one another.
+The rebuttal phase is the first point where domain experts can see one another. Early-consensus detection uses the blind `vote` values, not revised votes, so the contrarian trigger cannot be suppressed by post-hoc convergence.
 
 ### 6. Red Team
 
@@ -156,7 +159,7 @@ Red Team receives all blind memos and rebuttals. Its mandate is adversarial, not
 
 It emits a structured `RedTeamReport` containing failure modes, challenged assumptions, double-crux questions, and a `premature_consensus` flag.
 
-If the domain memos show >80% agreement on the same directional recommendation, the Red Team prompt explicitly requires a contrarian case before synthesis.
+If more than 80% of successful blind domain memos have the same `vote`, the Red Team prompt explicitly requires a contrarian case before synthesis. With four domain experts this means unanimity; with five domain experts it means all five because 4/5 equals 80%, not more than 80%.
 
 ### 7. Evidence Judge
 
@@ -251,7 +254,7 @@ Required tests:
 5. Blind memo prompts do not contain peer memo content.
 6. Rebuttal prompts do contain peer memo summaries only after blind round completes.
 7. Red Team runs after all blind/rebuttal calls.
-8. >80% directional consensus marks/requests a contrarian challenge.
+8. >80% matching blind `vote` values marks/requests a contrarian challenge.
 9. Evidence Judge sees provenance/status but result payload does not leak raw private chunks.
 10. Chairman is last and validates the strict verdict schema.
 11. Malformed Chairman JSON returns typed `DEFER`.
