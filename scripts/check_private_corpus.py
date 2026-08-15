@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import argparse
 import subprocess
+from collections.abc import Iterable
 from pathlib import PurePosixPath
-from typing import Iterable
 
 FORBIDDEN_PREFIXES = (
     "books_pdf/",
