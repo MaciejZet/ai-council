@@ -33,12 +33,12 @@ class FakeCouncilOS:
         )
 
 
+def _event_payloads(events):
+    return [json.loads(event.removeprefix("data: ").strip()) for event in events]
+
+
 def _event_names(events):
-    names = []
-    for event in events:
-        payload = json.loads(event.removeprefix("data: ").strip())
-        names.append(payload["event"])
-    return names
+    return [payload["event"] for payload in _event_payloads(events)]
 
 
 def test_council_os_mode_is_registered():
@@ -74,3 +74,44 @@ async def test_council_os_mode_respects_disabled_knowledge_base(monkeypatch):
     assert FakeCouncilOS.last_retriever is not None
     disabled_result = FakeCouncilOS.last_retriever("synthetic query")
     assert disabled_result.status == "disabled"
+
+
+@pytest.mark.asyncio
+async def test_council_os_mode_calls_completion_hook_once_and_emits_decision_id(monkeypatch):
+    monkeypatch.setattr(modes_module, "CouncilOS", FakeCouncilOS, raising=False)
+    captured = []
+
+    def on_complete(query, result):
+        captured.append((query, result))
+        return "decision-123"
+
+    mode = modes_module.CouncilOSMode(on_complete=on_complete)
+    events = [event async for event in mode.run_stream("synthetic question", llm=object())]
+    payloads = _event_payloads(events)
+
+    assert len(captured) == 1
+    assert captured[0][0] == "synthetic question"
+    result_event = next(payload for payload in payloads if payload["event"] == "council_os_result")
+    assert result_event["decision_id"] == "decision-123"
+
+
+@pytest.mark.asyncio
+async def test_council_os_mode_persistence_failure_does_not_break_or_leak_stream(monkeypatch):
+    monkeypatch.setattr(modes_module, "CouncilOS", FakeCouncilOS, raising=False)
+
+    def failing_callback(query, result):
+        raise RuntimeError("SENSITIVE_PRIVATE_SENTINEL")
+
+    mode = modes_module.CouncilOSMode(on_complete=failing_callback)
+    events = [event async for event in mode.run_stream("synthetic question", llm=object())]
+    payloads = _event_payloads(events)
+    combined = "".join(events)
+
+    assert [payload["event"] for payload in payloads] == [
+        "mode_start",
+        "council_os_result",
+        "complete",
+    ]
+    result_event = next(payload for payload in payloads if payload["event"] == "council_os_result")
+    assert "decision_id" not in result_event
+    assert "SENSITIVE_PRIVATE_SENTINEL" not in combined
