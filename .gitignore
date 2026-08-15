@@ -16,5 +16,16 @@ logs/
 debug_api_keys.txt
 data/*.db
 
+# Private knowledge corpus and local sync state
+private_knowledge/
+knowledge_private/
+drive_exports/
+ingestion_cache/
+.private_knowledge/
+*.epub
+*.mobi
+*.azw
+*.azw3
+
 # Cursor IDE — stan lokalny (ścieżki hosta, transcripts); nie commituj
 .cursor/
