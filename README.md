@@ -108,6 +108,16 @@ The Chairman runs last and returns a typed verdict with confidence, consensus, t
 
 When every role uses the same provider and model, Council OS still makes separate blind calls with isolated prompts. That reduces prompt-level groupthink, but it does not create independent models. Different providers can be wired in later without changing the decision contract.
 
+### 🧠 Decision Memory
+
+Authenticated `council_os` streams can persist a sanitized decision record. Send the existing `X-User-Session` header and a successful capture adds `decision_id` to the `council_os_result` SSE event. Anonymous and invalid-session runs still work, but they are not stored.
+
+Decision Memory records the business question, problem profile, routed role ids, blind and revised votes, confidence, knowledge status, Chairman verdict, assumptions, evidence-gap labels, and the next experiment. It does not store raw RAG passages, source inventories, Drive IDs, full expert memo prose, or full rebuttal prose.
+
+Outcomes are user-authored and can be revised as evidence matures. A record can hold an operational status (`success`, `failure`, `mixed`, or `inconclusive`), an optional hindsight `resolved_vote`, experiment result, postmortem, and notes.
+
+Calibration is computed only for decisions with a non-null `resolved_vote`. Domain experts are scored from their blind vote; the Chairman is scored from the final verdict. Reports expose sample size, hit rate, mean confidence, and a `brier_like_error`. Historical decisions are not fed back into future Council prompts in this version.
+
 ### 📚 Intelligent Knowledge Base
 - **RAG (Retrieval-Augmented Generation)** - Context from your documents
 - **Automatic categorization** - Marketing, strategy, business, productivity
@@ -153,6 +163,14 @@ Private books, summaries, notes, Drive exports, chunks and embeddings are not st
 - `GET /api/council/modes` - Available council modes, including `council_os`
 - `GET /api/council/mode/stream?mode=council_os&query=...` - Council OS structured decision stream
 
+### Decision Memory
+All Decision Memory REST endpoints require `X-User-Session`.
+
+- `GET /api/decision-memory` - List the current user's decision records; supports `limit`, `primary_domain`, `verdict`, and `outcome_status`
+- `GET /api/decision-memory/{decision_id}` - Read one sanitized decision plus expert votes and outcome
+- `PUT /api/decision-memory/{decision_id}/outcome` - Create or revise the outcome/postmortem
+- `GET /api/decision-memory/calibration` - Expert and Chairman calibration, including domain breakdowns
+
 ### Management
 - `GET /api/agents` - List all agents
 - `POST /api/agents/{name}/toggle` - Enable/disable agent
@@ -187,7 +205,7 @@ Private books, summaries, notes, Drive exports, chunks and embeddings are not st
 
 ## Configuration
 
-Plik `.env` już istnieje! Edytuj go i zamień `dummy-key` na prawdziwe klucze:
+Plik `.env` już istnieje! Edytuj go i zamień `dummy-key` na prawdziwe klucze API:
 
 ```env
 # Minimum: Dodaj przynajmniej 1 klucz API
@@ -262,9 +280,11 @@ tail -f logs/ai_council_main_20260403.log
 ```
 ├── main.py                 # FastAPI backend
 ├── src/
+│   ├── api/               # Focused HTTP integration layers
 │   ├── agents/            # Agent system
 │   ├── council/           # Council orchestration
 │   ├── knowledge/         # Knowledge base, private sync & RAG
+│   ├── storage/           # Sessions, users/projects, Decision Memory
 │   ├── plugins/           # Plugin system
 │   ├── utils/             # Production utilities (NEW)
 │   │   ├── logger.py      # Structured logging
@@ -304,6 +324,7 @@ tail -f logs/ai_council_main_20260403.log
 - ✅ No sensitive data in error messages
 - ✅ Private corpus paths and ebook formats blocked by repository guard
 - ✅ Retrieved private text omitted from normal source-display payloads and logs
+- ✅ Decision Memory excludes raw RAG passages, source inventories, and full expert/rebuttal prose
 
 ## Contributing
 

@@ -76,6 +76,7 @@ from src.plugins.utilities import (
 from src.storage.session_history import save_deliberation_to_session, session_history
 from src.agents.custom_validation import validate_custom_agent_payload
 from src.storage import user_db as user_store
+from src.api.decision_memory import install_decision_memory
 
 
 # ========== MODELS ==========
@@ -326,6 +327,7 @@ async def lifespan(app: FastAPI):
     await cache.disconnect()
 
 app = FastAPI(title="AI Council API", lifespan=lifespan)
+install_decision_memory(app)
 
 # Setup logger
 logger = setup_logger("ai_council.main")
@@ -446,6 +448,7 @@ CORE_CONTRACT_PATH_PREFIXES = (
     "/api/sessions",
     "/api/share",
     "/api/shared",
+    "/api/decision-memory",
 )
 
 
@@ -1767,7 +1770,7 @@ async def list_custom_agents():
 
 @app.post("/api/agents/custom")
 async def create_custom_agent_endpoint(request: CustomAgentRequest):
-    """Create a new custom agent"""
+    """Create a custom agent"""
     existing_names = [a.name.strip().lower() for a in agent_storage.load_all()]
     ok, err = validate_custom_agent_payload(
         request.name, request.tools, request.context_limit, existing_names, None
@@ -2438,4 +2441,3 @@ if __name__ == "__main__":
 
     # Ten sam port co `uv run uvicorn main:app` / start.py (spójnie z dokumentacją).
     uvicorn.run(app, host="0.0.0.0", port=8000)
-
