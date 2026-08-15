@@ -88,8 +88,11 @@ Uruchamia wbudowany `uvicorn` na porcie **8000** (zgodnie z powyższym).
 ### 📚 Intelligent Knowledge Base
 - **RAG (Retrieval-Augmented Generation)** - Context from your documents
 - **Automatic categorization** - Marketing, strategy, business, productivity
-- **PDF import** - Your entire business library
-- **Pinecone vector database** - Semantic search
+- **Local document import** - PDF/txt/md ingestion for authorized sources
+- **Private Drive sync** - Allowlist-only Google Drive → private Pinecone namespace
+- **Pinecone vector database** - Semantic search with source/domain/expert metadata
+
+Private books, summaries, notes, Drive exports, chunks and embeddings are not stored in this public repository. See [docs/PRIVATE_KNOWLEDGE.md](docs/PRIVATE_KNOWLEDGE.md).
 
 ### 🔧 Advanced Features
 - **Multi-provider AI**: OpenAI, Grok, Gemini, DeepSeek, Perplexity, OpenRouter
@@ -133,6 +136,7 @@ Uruchamia wbudowany `uvicorn` na porcie **8000** (zgodnie z powyższym).
 ### Knowledge Base
 - `POST /api/ingest` - Import PDF to knowledge base
 - `GET /api/stats` - Knowledge base statistics
+- `scripts/sync_private_knowledge.py` - Admin-only allowlisted Drive sync
 
 ### Monitoring
 - `GET /api/cache/stats` - Cache statistics
@@ -140,6 +144,7 @@ Uruchamia wbudowany `uvicorn` na porcie **8000** (zgodnie z powyższym).
 
 ## Documentation
 
+- **[docs/PRIVATE_KNOWLEDGE.md](docs/PRIVATE_KNOWLEDGE.md)** - Private Google Drive → Pinecone workflow and public-repo boundary
 - **[QUICK_START.md](QUICK_START.md)** - 🚀 Start w 3 krokach (ZACZNIJ TU!)
 - **[NAPRAWIONE.md](NAPRAWIONE.md)** - ✅ Co zostało naprawione i jak używać
 - **[TROUBLESHOOTING.md](TROUBLESHOOTING.md)** - 🔧 Rozwiązywanie problemów
@@ -173,9 +178,16 @@ DEEPSEEK_API_KEY=your_deepseek_key
 PINECONE_API_KEY=your_pinecone_key
 PINECONE_INDEX_NAME=your_index_name
 
+# Opcjonalne - prywatna biblioteka
+# Prawdziwe credentials i allowlist trzymaj poza repo.
+PINECONE_PRIVATE_NAMESPACE=private-library
+PRIVATE_KNOWLEDGE_DEBUG_TITLES=false
+
 # Opcjonalne - plugins
 TAVILY_API_KEY=your_tavily_key
 ```
+
+Pełna konfiguracja prywatnego źródła Drive jest w [docs/PRIVATE_KNOWLEDGE.md](docs/PRIVATE_KNOWLEDGE.md).
 
 **Gdzie zdobyć klucze?** Zobacz [QUICK_START.md](QUICK_START.md)
 
@@ -188,8 +200,8 @@ pytest tests/ -v
 # Run with coverage
 pytest tests/ --cov=src --cov-report=html
 
-# View coverage report
-open htmlcov/index.html
+# Verify that the public repo does not track private corpus paths
+uv run python scripts/check_private_corpus.py --tracked-only
 ```
 
 ## Monitoring
@@ -227,7 +239,7 @@ tail -f logs/ai_council_main_20260403.log
 ├── src/
 │   ├── agents/            # Agent system
 │   ├── council/           # Council orchestration
-│   ├── knowledge/         # Knowledge base & RAG
+│   ├── knowledge/         # Knowledge base, private sync & RAG
 │   ├── plugins/           # Plugin system
 │   ├── utils/             # Production utilities (NEW)
 │   │   ├── logger.py      # Structured logging
@@ -237,6 +249,7 @@ tail -f logs/ai_council_main_20260403.log
 │   │   ├── error_handler.py # Error handling
 │   │   └── health.py      # Health checks
 │   └── llm_providers.py   # AI provider integration
+├── scripts/               # Admin/safety commands
 ├── tests/                 # Test suite (NEW)
 ├── examples/              # Integration examples (NEW)
 └── static/                # Web UI
@@ -264,6 +277,8 @@ tail -f logs/ai_council_main_20260403.log
 - ✅ Rate limiting per client
 - ✅ File upload validation
 - ✅ No sensitive data in error messages
+- ✅ Private corpus paths and ebook formats blocked by repository guard
+- ✅ Retrieved private text omitted from normal source-display payloads and logs
 
 ## Contributing
 
@@ -273,6 +288,8 @@ Contributions welcome! Areas for improvement:
 - Improve UI/UX
 - Extend AI capabilities
 - Add more tests
+
+Do not include private books, summaries, notes, Drive exports, retrieved passages, real Drive IDs or credentials in public commits, PRs or issue attachments.
 
 ## License
 

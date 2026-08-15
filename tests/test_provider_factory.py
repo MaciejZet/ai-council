@@ -1,13 +1,14 @@
 """Regression tests for provider factory behavior."""
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 import main as api_main
 
 
 def test_create_llm_provider_rejects_unknown_provider():
-    with pytest.raises(Exception):
+    with pytest.raises(HTTPException):
         api_main.create_llm_provider("totally-unknown", "model-x")
 
 

@@ -7,7 +7,6 @@ from typing import Any
 
 from src.council.quality_decision import evaluate_quality_mode
 
-
 ROOT = Path(__file__).resolve().parent
 DATASET_PATH = ROOT / "quality_eval_dataset.json"
 BASELINE_PATH = ROOT / "quality_eval_baseline.json"
