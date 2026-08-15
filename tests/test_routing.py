@@ -1,7 +1,12 @@
 """Unit tests for heuristic agent routing."""
 
 from src.agents.core_agents import Analyst, Strategist
-from src.council.routing import QueryIntent, classify_query_intent, route_query, select_agents_for_intent
+from src.council.routing import (
+    QueryIntent,
+    classify_query_intent,
+    route_query,
+    select_agents_for_intent,
+)
 
 
 def test_classify_technical_query() -> None:
