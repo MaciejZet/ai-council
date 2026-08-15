@@ -30,6 +30,9 @@ jobs:
       - name: Sync dependencies (lockfile)
         run: uv sync --extra dev --frozen
 
+      - name: Private knowledge focused tests
+        run: uv run pytest tests/test_private_corpus_guard.py -v --tb=short --no-cov
+
       - name: Ruff (tests)
         run: uv run ruff check tests
 
