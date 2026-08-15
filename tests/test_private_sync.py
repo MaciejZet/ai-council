@@ -121,3 +121,95 @@ def test_sync_logs_neither_private_text_nor_title_by_default(tmp_path, monkeypat
     log_text = caplog.text
     assert "Synthetic private source sentence" not in log_text
     assert "Synthetic Source" not in log_text
+
+
+def test_sync_prunes_vectors_and_state_for_source_removed_from_allowlist(tmp_path, monkeypatch):
+    config = make_config(tmp_path, monkeypatch)
+    config.allowlist_file.write_text(json.dumps({"files": [], "folders": []}), encoding="utf-8")
+    state = {
+        "version": 1,
+        "documents": {
+            "removed-file-id": {
+                "doc_id": "removed-doc-id",
+                "remote_version": "old-version",
+                "content_hash": "old-hash",
+                "last_ingested_at": "2026-08-15T12:05:00Z",
+                "chunks": 3,
+            }
+        },
+    }
+    config.state_file.write_text(json.dumps(state), encoding="utf-8")
+    deleted = []
+
+    def fake_delete(doc_id, *, namespace):
+        deleted.append((doc_id, namespace))
+        return True
+
+    sync = PrivateKnowledgeSync(config, FakeDrive([]), delete_func=fake_delete)
+    report = sync.sync()
+
+    saved = json.loads(config.state_file.read_text(encoding="utf-8"))
+    assert deleted == [("removed-doc-id", "private-test")]
+    assert saved["documents"] == {}
+    assert report.deleted == 1
+
+
+def test_sync_keeps_state_when_removed_source_delete_fails(tmp_path, monkeypatch):
+    config = make_config(tmp_path, monkeypatch)
+    config.allowlist_file.write_text(json.dumps({"files": [], "folders": []}), encoding="utf-8")
+    state = {
+        "version": 1,
+        "documents": {
+            "removed-file-id": {
+                "doc_id": "removed-doc-id",
+                "remote_version": "old-version",
+                "content_hash": "old-hash",
+                "last_ingested_at": "2026-08-15T12:05:00Z",
+                "chunks": 3,
+            }
+        },
+    }
+    config.state_file.write_text(json.dumps(state), encoding="utf-8")
+
+    def fail_delete(doc_id, *, namespace):
+        raise RuntimeError("synthetic delete failure")
+
+    sync = PrivateKnowledgeSync(config, FakeDrive([]), delete_func=fail_delete)
+    report = sync.sync()
+
+    saved = json.loads(config.state_file.read_text(encoding="utf-8"))
+    assert "removed-file-id" in saved["documents"]
+    assert report.deleted == 0
+    assert report.failed == 1
+    assert report.failed_doc_ids == ["removed-doc-id"]
+
+
+def test_dry_run_never_prunes_removed_sources(tmp_path, monkeypatch):
+    config = make_config(tmp_path, monkeypatch)
+    config.allowlist_file.write_text(json.dumps({"files": [], "folders": []}), encoding="utf-8")
+    state = {
+        "version": 1,
+        "documents": {
+            "removed-file-id": {
+                "doc_id": "removed-doc-id",
+                "remote_version": "old-version",
+                "content_hash": "old-hash",
+                "last_ingested_at": "2026-08-15T12:05:00Z",
+                "chunks": 3,
+            }
+        },
+    }
+    config.state_file.write_text(json.dumps(state), encoding="utf-8")
+    deleted = []
+
+    def fake_delete(doc_id, *, namespace):
+        deleted.append((doc_id, namespace))
+        return True
+
+    sync = PrivateKnowledgeSync(config, FakeDrive([]), delete_func=fake_delete)
+    report = sync.sync(dry_run=True)
+
+    saved = json.loads(config.state_file.read_text(encoding="utf-8"))
+    assert deleted == []
+    assert "removed-file-id" in saved["documents"]
+    assert report.deleted == 0
