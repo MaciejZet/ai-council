@@ -17,15 +17,13 @@ class FakeLLM:
     async def generate(self, system_prompt, user_prompt, temperature=0.7, max_tokens=None):
         self.calls.append((system_prompt, user_prompt))
         expert_id = system_prompt.split("[EXPERT_ID:", 1)[1].split("]", 1)[0]
-        return LLMResponse(
-            content=(
-                '{"expert_id":"%s","vote":"TEST",'
-                '"recommendation":"PEER_MEMO_SENTINEL_%s",'
-                '"confidence":0.7,"claims":[],"assumptions":[],"risks":[],'
-                '"what_changes_my_mind":[]}' % (expert_id, expert_id)
-            ),
-            model="fake",
+        content = (
+            f'{{"expert_id":"{expert_id}","vote":"TEST",'
+            f'"recommendation":"PEER_MEMO_SENTINEL_{expert_id}",'
+            '"confidence":0.7,"claims":[],"assumptions":[],"risks":[],'
+            '"what_changes_my_mind":[]}'
         )
+        return LLMResponse(content=content, model="fake")
 
 
 class FakeRetriever:
