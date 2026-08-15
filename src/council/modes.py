@@ -10,6 +10,7 @@ from abc import ABC, abstractmethod
 
 from src.agents.base import AgentConfig, AgentResponse
 from src.agents.core_agents import Strategist, Analyst, Practitioner, Expert, Synthesizer
+from src.council.council_os import CouncilOS
 from src.llm_providers import LLMProvider, OpenAIProvider
 from src.knowledge.retriever import query_knowledge, format_sources_for_display
 
@@ -595,6 +596,37 @@ Stwórz RAPORT RED TEAM w formacie:
         yield self._sse("complete", {"total_rounds": 8, "total_agents": 7})
 
 
+# ========== 🏛️ COUNCIL OS ==========
+class CouncilOSMode(CouncilMode):
+    """Decision-oriented Council OS pipeline."""
+
+    name = "council_os"
+    emoji = "🏛️"
+    description = "Decision Council: blind experts, Red Team, Evidence Judge, Chairman"
+
+    async def run_stream(
+        self,
+        query: str,
+        llm: Optional[LLMProvider] = None
+    ) -> AsyncGenerator[str, None]:
+        llm = llm or OpenAIProvider()
+        yield self._sse("mode_start", {"mode": self.name, "emoji": self.emoji})
+
+        result = await CouncilOS(llm).deliberate(query)
+        yield self._sse(
+            "council_os_result",
+            {"result": result.model_dump(mode="json")},
+        )
+        yield self._sse(
+            "complete",
+            {
+                "total_rounds": 5,
+                "total_agents": len(result.routed_experts) + 3,
+                "verdict": result.verdict.verdict.value,
+            },
+        )
+
+
 # ========== REGISTRY ==========
 COUNCIL_MODES: Dict[str, type] = {
     "deep_dive": DeepDiveMode,
@@ -602,6 +634,7 @@ COUNCIL_MODES: Dict[str, type] = {
     "devils_advocate": DevilsAdvocateMode,
     "swot": SWOTMode,
     "red_team": RedTeamMode,
+    "council_os": CouncilOSMode,
 }
 
 def get_mode(mode_name: str) -> Optional[CouncilMode]:
