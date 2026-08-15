@@ -4,7 +4,7 @@
 
 **Goal:** Keep `MaciejZet/ai-council` safe as a public repository while synchronizing an explicitly allowlisted private Google Drive library into a private Pinecone namespace that Council can retrieve from without committing source content.
 
-**Architecture:** Google Drive is the private source of truth. A local/admin-only sync command uses read-only Drive credentials, exports/downloads allowlisted files, normalizes and chunks them through the existing knowledge pipeline, and writes vectors plus provenance metadata into a dedicated Pinecone namespace. Council runtime only queries Pinecone. Git, CI and normal logs never contain private source text.
+**Architecture:** Google Drive is the private source of truth. A local/admin-only sync command uses read-only Drive credentials, exports or downloads allowlisted files, passes their text through the existing chunking/embedding pipeline, and writes vectors plus provenance into a dedicated Pinecone namespace. Council runtime reads Pinecone only. Git, CI and normal logs contain no private source text.
 
 **Tech Stack:** Python 3.12+, FastAPI, Pydantic 2, `google-api-python-client`, `google-auth`, OpenAI embeddings, Pinecone Python SDK, pytest, uv, Ruff.
 
@@ -13,44 +13,42 @@
 - Public Git may contain code, schemas, book titles, authors and framework identifiers, but no PDFs/ebooks, book summaries, highlights, annotations, extracted source text, private retrieval chunks, embeddings, Drive exports, or ingestion caches.
 - Google Drive access is read-only and limited to an explicit allowlist of folder IDs and file IDs.
 - Private Drive credentials and allowlist configuration remain outside Git.
-- Use a dedicated Pinecone namespace configured by `PINECONE_PRIVATE_NAMESPACE`; do not mix the private corpus into the default namespace.
-- Normal application logs contain technical IDs, counts, timings and errors only; no retrieved source text and no private source titles by default.
-- CI must run with no Google Drive, Pinecone or production LLM credentials and use synthetic fixtures only.
-- The app must still start and deliberate when private knowledge is unavailable.
-- A knowledge outage must be represented as an explicit degraded status; the system must not imply that private sources were consulted.
-- Adding or changing a book in Drive must require no Git commit.
-- Existing public API behavior should remain backward-compatible unless a new optional field is added.
-
----
+- Private vectors use `PINECONE_PRIVATE_NAMESPACE`; existing public/demo ingestion may continue using its current default namespace behavior.
+- Normal logs contain technical IDs, counts, timings and error codes only. Source text is never logged. Private source titles are logged only when `PRIVATE_KNOWLEDGE_DEBUG_TITLES=true`.
+- CI runs without Google Drive, Pinecone or production LLM credentials and uses synthetic fixtures only.
+- The app starts and deliberates when private knowledge is unavailable.
+- A knowledge outage is represented as `unavailable`; the system never implies that private sources were consulted.
+- Adding or changing a Drive source requires no Git commit.
+- Existing public API behavior remains backward-compatible except for additive optional status fields.
 
 ## File map
 
 ### Create
 
-- `src/knowledge/private_models.py` — typed models for allowlist entries, private source metadata, sync state and retrieval status.
-- `src/knowledge/private_config.py` — environment-backed private knowledge configuration with no secret values committed.
-- `src/knowledge/drive_source.py` — read-only Google Drive client, allowlist traversal, binary download and Google Docs export.
-- `src/knowledge/private_sync.py` — idempotent Drive-to-Pinecone synchronization service.
-- `scripts/sync_private_knowledge.py` — explicit admin CLI entrypoint.
-- `scripts/check_private_corpus.py` — repository safety guard for tracked/staged private-corpus paths and ebook formats.
-- `tests/test_private_config.py` — configuration and no-credentials behavior.
-- `tests/test_drive_source.py` — mocked Drive traversal/download/export tests.
-- `tests/test_private_sync.py` — idempotency, hashing, failure safety and no-text logging tests.
-- `tests/test_private_retrieval.py` — namespace, domain/expert filters, provenance and degraded status tests.
-- `tests/test_private_corpus_guard.py` — repository safety guard tests.
-- `docs/PRIVATE_KNOWLEDGE.md` — operator documentation for Drive credentials, allowlist and sync.
+- `src/knowledge/private_models.py`
+- `src/knowledge/private_config.py`
+- `src/knowledge/drive_source.py`
+- `src/knowledge/private_sync.py`
+- `scripts/sync_private_knowledge.py`
+- `scripts/check_private_corpus.py`
+- `tests/test_private_config.py`
+- `tests/test_drive_source.py`
+- `tests/test_private_sync.py`
+- `tests/test_private_retrieval.py`
+- `tests/test_private_corpus_guard.py`
+- `docs/PRIVATE_KNOWLEDGE.md`
 
 ### Modify
 
-- `.gitignore` — ignore every local private-knowledge working path and ebook format.
-- `.env.example` — document placeholder-only private knowledge configuration.
-- `pyproject.toml` — add Google Drive client/auth dependencies.
-- `uv.lock` — lock the new dependencies.
-- `src/knowledge/ingest.py` — extract a reusable text-document upsert path, namespace support, stable IDs and content hashes.
-- `src/knowledge/retriever.py` — namespace-aware retrieval, expert/domain filters, structured status and provenance-preserving context.
-- `src/council/orchestrator.py` — propagate knowledge status and avoid claiming private retrieval on outages.
-- `.github/workflows/ci.yml` — run the corpus guard with no production secrets.
-- `README.md` — point operators to the private knowledge setup without suggesting that books belong in the repository.
+- `.gitignore`
+- `.env.example`
+- `pyproject.toml`
+- `uv.lock`
+- `src/knowledge/ingest.py`
+- `src/knowledge/retriever.py`
+- `src/council/orchestrator.py`
+- `.github/workflows/ci.yml`
+- `README.md`
 
 ---
 
@@ -63,12 +61,10 @@
 - Modify: `.github/workflows/ci.yml`
 
 **Interfaces:**
-- Consumes: repository file paths from `git ls-files` and staged paths from `git diff --cached --name-only`.
-- Produces: `check_paths(paths: Iterable[str]) -> list[str]` and CLI exit code `0` for safe, `1` for violations.
+- Produces: `check_paths(paths: Iterable[str]) -> list[str]`
+- CLI: `python scripts/check_private_corpus.py [--tracked-only]`, exit `0` when safe and `1` on violations.
 
-- [ ] **Step 1: Write failing guard tests**
-
-Create `tests/test_private_corpus_guard.py`:
+- [ ] **Step 1: Write the failing tests**
 
 ```python
 from scripts.check_private_corpus import check_paths
@@ -95,9 +91,7 @@ def test_guard_allows_public_docs_and_test_pdf():
     ]) == []
 ```
 
-- [ ] **Step 2: Run the tests and verify failure**
-
-Run:
+- [ ] **Step 2: Verify the tests fail**
 
 ```bash
 uv run pytest tests/test_private_corpus_guard.py -v --no-cov
@@ -105,11 +99,18 @@ uv run pytest tests/test_private_corpus_guard.py -v --no-cov
 
 Expected: import failure because `scripts/check_private_corpus.py` does not exist.
 
-- [ ] **Step 3: Implement the minimal guard**
+- [ ] **Step 3: Implement the guard**
 
-Create `scripts/check_private_corpus.py` with these public constants and function:
+Use this implementation shape:
 
 ```python
+from __future__ import annotations
+
+import argparse
+import subprocess
+from pathlib import Path, PurePosixPath
+from typing import Iterable
+
 FORBIDDEN_PREFIXES = (
     "books_pdf/",
     "private_knowledge/",
@@ -122,14 +123,40 @@ FORBIDDEN_EXTENSIONS = {".epub", ".mobi", ".azw", ".azw3"}
 
 
 def check_paths(paths: Iterable[str]) -> list[str]:
-    ...
+    violations: list[str] = []
+    for raw in paths:
+        normalized = raw.replace("\\", "/").lstrip("./")
+        suffix = PurePosixPath(normalized).suffix.lower()
+        if normalized.startswith(FORBIDDEN_PREFIXES) or suffix in FORBIDDEN_EXTENSIONS:
+            violations.append(normalized)
+    return sorted(set(violations))
+
+
+def git_paths(args: list[str]) -> list[str]:
+    output = subprocess.check_output(["git", *args], text=True)
+    return [line.strip() for line in output.splitlines() if line.strip()]
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--tracked-only", action="store_true")
+    parsed = parser.parse_args()
+    paths = git_paths(["ls-files"])
+    if not parsed.tracked_only:
+        paths.extend(git_paths(["diff", "--cached", "--name-only"]))
+    violations = check_paths(paths)
+    for path in violations:
+        print(path)
+    return 1 if violations else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
 ```
 
-Normalize separators to `/`, reject every path under a forbidden prefix, and reject the ebook extensions case-insensitively. The CLI must combine tracked paths and staged paths, print only violating paths, and never open or print file contents.
+The script inspects path names only and never opens or prints file content.
 
 - [ ] **Step 4: Strengthen `.gitignore`**
-
-Add:
 
 ```gitignore
 # Private knowledge corpus and local sync state
@@ -145,36 +172,27 @@ ingestion_cache/
 *.azw3
 ```
 
-Do not add `*.pdf`; public documentation/test PDFs remain valid repository assets.
+Do not ignore `*.pdf` globally because public documentation/test PDFs are valid repository assets.
 
-- [ ] **Step 5: Add the guard to CI**
-
-Add before pytest in `.github/workflows/ci.yml`:
+- [ ] **Step 5: Add the guard to CI before pytest**
 
 ```yaml
       - name: Public repository corpus guard
         run: uv run python scripts/check_private_corpus.py --tracked-only
 ```
 
-- [ ] **Step 6: Run focused verification**
+- [ ] **Step 6: Verify and commit**
 
 ```bash
 uv run pytest tests/test_private_corpus_guard.py -v --no-cov
 uv run python scripts/check_private_corpus.py --tracked-only
-```
-
-Expected: tests pass and current repository returns exit code `0`.
-
-- [ ] **Step 7: Commit**
-
-```bash
 git add .gitignore .github/workflows/ci.yml scripts/check_private_corpus.py tests/test_private_corpus_guard.py
 git commit -m "security: enforce private knowledge repository boundary"
 ```
 
 ---
 
-### Task 2: Add explicit private knowledge configuration and typed metadata
+### Task 2: Add typed private configuration and metadata
 
 **Files:**
 - Create: `src/knowledge/private_models.py`
@@ -183,74 +201,89 @@ git commit -m "security: enforce private knowledge repository boundary"
 - Modify: `.env.example`
 
 **Interfaces:**
-- Produces: `PrivateKnowledgeConfig.from_env()`, `DriveAllowlist`, `DriveAllowlistEntry`, `PrivateSourceMetadata`, `KnowledgeRetrievalResult`.
-- Later tasks consume these exact names.
+- Produces: `DriveAllowlistEntry`, `DriveAllowlist`, `PrivateSourceMetadata`, `KnowledgeRetrievalResult`, `PrivateKnowledgeConfig.from_env()`.
 
-- [ ] **Step 1: Write failing configuration tests**
-
-Create `tests/test_private_config.py` covering:
+- [ ] **Step 1: Write failing tests**
 
 ```python
+from src.knowledge.private_config import PrivateKnowledgeConfig
+
+
 def test_private_config_is_disabled_without_allowlist(monkeypatch):
     monkeypatch.delenv("PRIVATE_KNOWLEDGE_ALLOWLIST_FILE", raising=False)
     cfg = PrivateKnowledgeConfig.from_env()
     assert cfg.enabled is False
 
 
-def test_private_config_never_requires_drive_credentials_for_app_start(monkeypatch):
-    monkeypatch.setenv("PINECONE_PRIVATE_NAMESPACE", "maciej-private")
+def test_app_config_does_not_require_drive_credentials(monkeypatch):
+    monkeypatch.delenv("GOOGLE_APPLICATION_CREDENTIALS", raising=False)
+    monkeypatch.setenv("PINECONE_PRIVATE_NAMESPACE", "private-test")
     cfg = PrivateKnowledgeConfig.from_env()
-    assert cfg.pinecone_namespace == "maciej-private"
+    assert cfg.pinecone_namespace == "private-test"
 ```
 
-Also test parsing a synthetic allowlist file into `DriveAllowlist`.
+Add a test that writes this synthetic allowlist to `tmp_path` and parses it successfully:
 
-- [ ] **Step 2: Run tests and verify failure**
+```json
+{
+  "files": [
+    {
+      "id": "synthetic-file-id",
+      "source_type": "synthesis",
+      "domains": ["strategy"],
+      "experts": ["strategy"],
+      "framework_tags": ["test-framework"]
+    }
+  ],
+  "folders": []
+}
+```
+
+- [ ] **Step 2: Verify failure**
 
 ```bash
 uv run pytest tests/test_private_config.py -v --no-cov
 ```
 
-Expected: imports fail because the modules do not exist.
-
-- [ ] **Step 3: Add the models**
-
-`src/knowledge/private_models.py` should define Pydantic models equivalent to:
+- [ ] **Step 3: Implement the models**
 
 ```python
+from typing import Any, Literal
+from pydantic import BaseModel, Field
+
+SourceType = Literal[
+    "book", "summary", "personal_note", "synthesis", "internal_doc",
+    "article", "ogólne", "web", "notion", "file",
+]
+KnowledgeStatus = Literal["ok", "no_matches", "disabled", "unavailable"]
+
+
 class DriveAllowlistEntry(BaseModel):
     id: str
-    source_type: Literal["book", "summary", "personal_note", "synthesis", "internal_doc"] = "book"
-    domains: list[str] = []
-    experts: list[str] = []
-    framework_tags: list[str] = []
+    source_type: SourceType = "book"
+    domains: list[str] = Field(default_factory=list)
+    experts: list[str] = Field(default_factory=list)
+    framework_tags: list[str] = Field(default_factory=list)
     recursive: bool = True
 
 
 class DriveAllowlist(BaseModel):
-    files: list[DriveAllowlistEntry] = []
-    folders: list[DriveAllowlistEntry] = []
+    files: list[DriveAllowlistEntry] = Field(default_factory=list)
+    folders: list[DriveAllowlistEntry] = Field(default_factory=list)
 
 
 class PrivateSourceMetadata(BaseModel):
     doc_id: str
     title: str
-    source_type: str
+    source_type: SourceType
     language: str
-    domains: list[str]
-    experts: list[str]
-    framework_tags: list[str]
+    domains: list[str] = Field(default_factory=list)
+    experts: list[str] = Field(default_factory=list)
+    framework_tags: list[str] = Field(default_factory=list)
     drive_file_id: str
     content_hash: str
     modified_time: str | None = None
-```
 
-Use `Field(default_factory=list)` instead of mutable list defaults in the implementation.
-
-Define retrieval status as:
-
-```python
-KnowledgeStatus = Literal["ok", "no_matches", "disabled", "unavailable"]
 
 class KnowledgeRetrievalResult(BaseModel):
     status: KnowledgeStatus
@@ -258,18 +291,19 @@ class KnowledgeRetrievalResult(BaseModel):
     error_code: str | None = None
 ```
 
-- [ ] **Step 4: Add environment-backed configuration**
+- [ ] **Step 4: Implement environment configuration**
 
-`PrivateKnowledgeConfig.from_env()` must read only variable names, never log values:
+`PrivateKnowledgeConfig` is a frozen dataclass with fields:
 
-```text
-PRIVATE_KNOWLEDGE_ALLOWLIST_FILE
-PRIVATE_KNOWLEDGE_STATE_FILE
-PINECONE_PRIVATE_NAMESPACE
-PRIVATE_KNOWLEDGE_DEBUG_TITLES
+```python
+allowlist_file: Path | None
+state_file: Path
+pinecone_namespace: str
+debug_titles: bool
+enabled: bool
 ```
 
-Defaults:
+`from_env()` uses these exact defaults:
 
 ```text
 PRIVATE_KNOWLEDGE_STATE_FILE=.private_knowledge/state.json
@@ -277,11 +311,9 @@ PINECONE_PRIVATE_NAMESPACE=private-library
 PRIVATE_KNOWLEDGE_DEBUG_TITLES=false
 ```
 
-`enabled` means an allowlist path has been configured. It must not mean Drive credentials are valid; credential validation belongs to the sync CLI.
+It must not validate Google credentials. Add `load_allowlist() -> DriveAllowlist`, which reads JSON only when an allowlist path is configured.
 
-- [ ] **Step 5: Update `.env.example` with placeholders only**
-
-Add:
+- [ ] **Step 5: Update `.env.example`**
 
 ```env
 # Private knowledge sync (optional; local/admin use only)
@@ -292,7 +324,7 @@ PINECONE_PRIVATE_NAMESPACE=private-library
 PRIVATE_KNOWLEDGE_DEBUG_TITLES=false
 ```
 
-- [ ] **Step 6: Run tests and commit**
+- [ ] **Step 6: Verify and commit**
 
 ```bash
 uv run pytest tests/test_private_config.py -v --no-cov
@@ -302,93 +334,102 @@ git commit -m "feat: add private knowledge configuration models"
 
 ---
 
-### Task 3: Make the existing ingestion pipeline namespace-aware and idempotent
+### Task 3: Make ingestion reusable, namespace-aware and failure-safe
 
 **Files:**
 - Modify: `src/knowledge/ingest.py`
-- Create: `tests/test_private_sync.py` (first ingestion-core tests)
+- Create: `tests/test_private_sync.py`
 
 **Interfaces:**
 - Produces:
   - `content_sha256(content: bytes | str) -> str`
   - `stable_doc_id(source_kind: str, source_id: str) -> str`
-  - `upsert_text_document(text: str, metadata: PrivateSourceMetadata, *, namespace: str, batch_size: int = 100) -> dict[str, Any]`
-- Existing `ingest_pdf()` remains callable and becomes a wrapper around the generic path.
+  - `generate_chunk_id(doc_id: str, content_hash: str, chunk_index: int) -> str`
+  - `upsert_text_document(text: str, metadata: PrivateSourceMetadata, *, namespace: str | None = None, batch_size: int = 100) -> dict[str, Any]`
 
-- [ ] **Step 1: Write failing ingestion-core tests**
+- [ ] **Step 1: Write failing core tests**
 
-Use fake embeddings and a fake Pinecone index. Verify:
+Use a fake Pinecone index and monkeypatch `get_embeddings()` to return deterministic vectors. Assert that `upsert_text_document()` passes `namespace="private-test"`, stores the metadata fields below, and does not call delete when an upsert raises.
 
-```python
-def test_stable_doc_id_is_path_independent():
-    assert stable_doc_id("gdrive", "abc123") == stable_doc_id("gdrive", "abc123")
-
-
-def test_upsert_uses_private_namespace(fake_index, monkeypatch):
-    result = upsert_text_document(
-        "synthetic knowledge only",
-        synthetic_metadata,
-        namespace="private-test",
-    )
-    assert fake_index.upsert_calls[0]["namespace"] == "private-test"
-```
-
-Also verify each vector metadata record contains `doc_id`, `content_hash`, `source_type`, `domains`, `experts`, `framework_tags`, `chunk_index` and `text`.
-
-- [ ] **Step 2: Run focused tests and verify failure**
-
-```bash
-uv run pytest tests/test_private_sync.py -k "stable_doc_id or upsert_uses_private_namespace" -v --no-cov
-```
-
-- [ ] **Step 3: Extract the generic text ingestion path**
-
-Keep existing `chunk_text()` and embedding generation. Replace filename/path-derived vector identity with stable source identity:
-
-```python
-def stable_doc_id(source_kind: str, source_id: str) -> str:
-    return hashlib.sha256(f"{source_kind}:{source_id}".encode()).hexdigest()[:28]
-
-
-def generate_chunk_id(doc_id: str, content_hash: str, chunk_index: int) -> str:
-    raw = f"{doc_id}:{content_hash}:{chunk_index}"
-    return hashlib.sha256(raw.encode()).hexdigest()
-```
-
-`upsert_text_document()` must upsert all new vectors first. Only after successful upserts may it remove older versions with the same `doc_id` and a different `content_hash`.
-
-Use a Pinecone delete filter equivalent to:
+Required vector metadata:
 
 ```python
 {
+    "text": "synthetic chunk",
+    "title": "Synthetic Source",
+    "source_type": "book",
+    "language": "en",
+    "domains": ["strategy"],
+    "experts": ["strategy"],
+    "framework_tags": ["synthetic-framework"],
+    "chunk_index": 0,
+    "total_chunks": 1,
+    "doc_id": "stable-id",
+    "content_hash": "content-hash",
+    "embedding_version": "v2",
+}
+```
+
+- [ ] **Step 2: Verify failure**
+
+```bash
+uv run pytest tests/test_private_sync.py -k "ingest or stable or namespace" -v --no-cov
+```
+
+- [ ] **Step 3: Add deterministic identity helpers**
+
+```python
+def content_sha256(content: bytes | str) -> str:
+    raw = content.encode("utf-8") if isinstance(content, str) else content
+    return hashlib.sha256(raw).hexdigest()
+
+
+def stable_doc_id(source_kind: str, source_id: str) -> str:
+    return hashlib.sha256(f"{source_kind}:{source_id}".encode("utf-8")).hexdigest()[:28]
+
+
+def generate_chunk_id(doc_id: str, content_hash: str, chunk_index: int) -> str:
+    raw = f"{doc_id}:{content_hash}:{chunk_index}".encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()
+```
+
+- [ ] **Step 4: Add `upsert_text_document()`**
+
+Reuse existing `chunk_text()`, `get_embeddings()` and `get_pinecone_index()`. Build all new vectors and call:
+
+```python
+index.upsert(vectors=batch, namespace=namespace)
+```
+
+when `namespace` is not `None`. After every batch succeeds, remove stale versions only:
+
+```python
+stale_filter = {
     "$and": [
         {"doc_id": {"$eq": metadata.doc_id}},
         {"content_hash": {"$ne": metadata.content_hash}},
     ]
 }
+index.delete(filter=stale_filter, namespace=namespace)
 ```
 
-and pass the same `namespace` to `upsert` and `delete`.
+If an upsert raises, propagate the error and do not call delete.
 
-- [ ] **Step 4: Preserve local PDF compatibility**
+- [ ] **Step 5: Keep `ingest_pdf()` backward-compatible**
 
-Refactor `ingest_pdf()` to extract text, build `PrivateSourceMetadata`, then call `upsert_text_document()`. Existing callers without `namespace` continue to use the default namespace behavior so current public/demo ingestion does not silently move.
+`ingest_pdf()` continues to accept the existing arguments. It extracts text, builds metadata, and delegates to `upsert_text_document()`. Do not store `source_path` in new vector metadata.
 
-- [ ] **Step 5: Verify failure safety**
-
-Add a fake index that raises during upsert and assert `delete()` was never called. This implements the design rule that a failed refresh cannot destroy the last valid vectors.
-
-- [ ] **Step 6: Run tests and commit**
+- [ ] **Step 6: Verify and commit**
 
 ```bash
 uv run pytest tests/test_private_sync.py -v --no-cov
 git add src/knowledge/ingest.py tests/test_private_sync.py
-git commit -m "refactor: add namespace-safe idempotent knowledge ingestion"
+git commit -m "refactor: add namespace-safe knowledge ingestion"
 ```
 
 ---
 
-### Task 4: Add a read-only, allowlist-only Google Drive source adapter
+### Task 4: Add the read-only allowlist Drive adapter
 
 **Files:**
 - Modify: `pyproject.toml`
@@ -397,50 +438,7 @@ git commit -m "refactor: add namespace-safe idempotent knowledge ingestion"
 - Create: `tests/test_drive_source.py`
 
 **Interfaces:**
-- Consumes: `DriveAllowlist`, `DriveAllowlistEntry`.
-- Produces:
-  - `DriveSourceRecord`
-  - `DriveSourceClient.list_allowed(allowlist: DriveAllowlist) -> list[DriveSourceRecord]`
-  - `DriveSourceClient.read_bytes(record: DriveSourceRecord) -> bytes`
-
-- [ ] **Step 1: Add dependencies**
-
-Add to `pyproject.toml`:
-
-```toml
-"google-api-python-client>=2.0.0",
-"google-auth>=2.0.0",
-```
-
-Then run:
-
-```bash
-uv lock
-uv sync --extra dev
-```
-
-- [ ] **Step 2: Write mocked Drive tests**
-
-The tests must not call Google. Cover:
-
-1. a file ID explicitly present in the allowlist;
-2. a folder ID whose children are listed;
-3. a file outside the allowlist is never returned;
-4. `application/pdf` uses Drive media download;
-5. `application/vnd.google-apps.document` uses export to `text/plain` bytes;
-6. unsupported MIME types are skipped with a metadata-only warning.
-
-- [ ] **Step 3: Run tests and verify failure**
-
-```bash
-uv run pytest tests/test_drive_source.py -v --no-cov
-```
-
-- [ ] **Step 4: Implement `DriveSourceClient`**
-
-Build the Drive v3 service lazily with `google.auth.default()` using the read-only Drive scope. Do not initialize the client at module import time.
-
-The record should contain only metadata needed for sync:
+- Produces `DriveSourceRecord` and `DriveSourceClient`.
 
 ```python
 @dataclass(frozen=True)
@@ -453,23 +451,86 @@ class DriveSourceRecord:
     allowlist_entry: DriveAllowlistEntry
 ```
 
-Folder traversal must query children by parent ID. If `recursive=True`, recurse only through descendant folders of that allowlisted folder. Never issue an unbounded account-wide file listing.
+Required client methods:
 
-- [ ] **Step 5: Keep credentials outside the repository**
+```python
+class DriveSourceClient:
+    def list_allowed(self, allowlist: DriveAllowlist) -> list[DriveSourceRecord]:
+        raise NotImplementedError
 
-Credential errors should be raised as a dedicated `PrivateKnowledgeConfigError`/`DriveSourceError` containing no credential path contents and no source text.
+    def read_bytes(self, record: DriveSourceRecord) -> bytes:
+        raise NotImplementedError
+```
 
-- [ ] **Step 6: Run tests and commit**
+The `NotImplementedError` bodies above define the interface only; the implementation step below replaces them in the production file.
+
+- [ ] **Step 1: Add dependencies and lock them**
+
+Add:
+
+```toml
+"google-api-python-client>=2.0.0",
+"google-auth>=2.0.0",
+```
+
+Then:
+
+```bash
+uv lock
+uv sync --extra dev
+```
+
+- [ ] **Step 2: Write mocked tests**
+
+No test may call Google. Cover explicit file IDs, children of allowlisted folders, recursive descent limited to those folders, rejection of files outside the allowlist, binary PDF download, Google Docs export as UTF-8 text bytes, and unsupported MIME type handling.
+
+- [ ] **Step 3: Verify failure**
+
+```bash
+uv run pytest tests/test_drive_source.py -v --no-cov
+```
+
+- [ ] **Step 4: Implement lazy read-only Drive access**
+
+Build the service only inside `DriveSourceClient.__init__()` or a private lazy getter:
+
+```python
+import google.auth
+from googleapiclient.discovery import build
+
+DRIVE_READONLY_SCOPE = "https://www.googleapis.com/auth/drive.readonly"
+
+credentials, _ = google.auth.default(scopes=[DRIVE_READONLY_SCOPE])
+service = build("drive", "v3", credentials=credentials, cache_discovery=False)
+```
+
+Folder listing uses a parent-bound query:
+
+```python
+query = f"'{folder_id}' in parents and trashed = false"
+```
+
+Request only:
+
+```text
+id,name,mimeType,modifiedTime,md5Checksum,parents
+```
+
+Binary files use `files().get_media(fileId=record.file_id)`. Google Docs with MIME type `application/vnd.google-apps.document` use `files().export_media(fileId=record.file_id, mimeType="text/plain")`. Read bytes with `MediaIoBaseDownload` into `io.BytesIO`.
+
+Never issue an account-wide list query without an allowlisted parent.
+
+- [ ] **Step 5: Verify and commit**
 
 ```bash
 uv run pytest tests/test_drive_source.py -v --no-cov
 git add pyproject.toml uv.lock src/knowledge/drive_source.py tests/test_drive_source.py
-git commit -m "feat: add allowlist-only Google Drive knowledge source"
+git commit -m "feat: add allowlist-only Google Drive source"
 ```
 
 ---
 
-### Task 5: Implement idempotent Drive-to-Pinecone synchronization
+### Task 5: Implement idempotent Drive-to-Pinecone sync
 
 **Files:**
 - Create: `src/knowledge/private_sync.py`
@@ -477,76 +538,100 @@ git commit -m "feat: add allowlist-only Google Drive knowledge source"
 - Create: `scripts/sync_private_knowledge.py`
 
 **Interfaces:**
-- Consumes: `PrivateKnowledgeConfig`, `DriveSourceClient`, `upsert_text_document()`.
 - Produces:
-  - `PrivateKnowledgeSync.sync(*, dry_run: bool = False) -> SyncReport`
-  - CLI: `uv run python scripts/sync_private_knowledge.py [--dry-run]`
+  - `PrivateKnowledgeSync.sync(dry_run: bool = False) -> SyncReport`
+  - CLI `uv run python scripts/sync_private_knowledge.py [--dry-run]`
 
-- [ ] **Step 1: Add failing sync behavior tests**
+- [ ] **Step 1: Add failing behavior tests**
 
-Use only synthetic source text. Verify:
+Use synthetic bytes only. Verify:
 
-- unchanged remote version is skipped;
-- changed remote version is fetched, hashed and re-ingested;
-- a Google Doc and a PDF both produce text without persisting an export in the repo;
-- the state file stores IDs/hashes/counts but no source text;
-- a failed embedding/upsert does not advance state;
-- sync report contains counts and `doc_id`, never source text;
-- log capture does not contain the synthetic private sentence or source title when debug titles are off.
+1. same `remote_version` is skipped;
+2. changed source is fetched, SHA-256 hashed and ingested;
+3. Google Docs decode UTF-8 directly;
+4. PDFs are written only inside `tempfile.TemporaryDirectory()` and passed to existing PDF extraction;
+5. failed upsert does not advance state;
+6. state contains IDs, versions, hashes, timestamps and chunk counts only;
+7. captured logs contain neither the synthetic private sentence nor the synthetic source title while debug titles are off.
 
-- [ ] **Step 2: Implement private sync state**
+- [ ] **Step 2: Implement state loading and atomic saving**
 
-Store state at `PRIVATE_KNOWLEDGE_STATE_FILE`, default `.private_knowledge/state.json`:
+State schema:
 
 ```json
 {
   "version": 1,
   "documents": {
-    "<drive-file-id>": {
-      "doc_id": "...",
-      "remote_version": "...",
-      "content_hash": "...",
-      "last_ingested_at": "...",
+    "synthetic-drive-file-id": {
+      "doc_id": "synthetic-doc-id",
+      "remote_version": "2026-08-15T12:00:00Z",
+      "content_hash": "sha256-value",
+      "last_ingested_at": "2026-08-15T12:05:00Z",
       "chunks": 12
     }
   }
 }
 ```
 
-No title, summary, extracted text or chunk text goes into state.
+Save with a sibling temporary file and `Path.replace()` so a failed write does not corrupt the previous state.
 
-- [ ] **Step 3: Implement the sync algorithm**
+- [ ] **Step 3: Implement the sync loop**
 
-For each allowlisted record:
+For each `DriveSourceRecord`:
 
-1. derive `remote_version = md5_checksum or modified_time or "unknown"`;
-2. skip immediately when state has the same remote version;
-3. read bytes only for changed/new records;
-4. compute SHA-256;
-5. decode Google Docs `text/plain` as UTF-8; for PDFs use the existing PDF extractor via a secure temporary file outside the repository working tree;
-6. create `PrivateSourceMetadata` using the allowlist entry plus title/language detection;
-7. call `upsert_text_document(..., namespace=config.pinecone_namespace)`;
-8. update state only after success;
-9. write state atomically using a temporary sibling file plus `Path.replace()`.
-
-Temporary files must use `tempfile.TemporaryDirectory()` and must not be placed under the repository.
-
-- [ ] **Step 4: Implement the admin CLI**
-
-The CLI must:
-
-```text
-1. load PrivateKnowledgeConfig;
-2. require PRIVATE_KNOWLEDGE_ALLOWLIST_FILE;
-3. validate Drive credentials only now, not at app import/start;
-4. run sync;
-5. print a metadata-only report: scanned/skipped/updated/failed counts and doc IDs;
-6. return non-zero only for configuration errors or failed source updates.
+```python
+remote_version = record.md5_checksum or record.modified_time or "unknown"
+previous = state.documents.get(record.file_id)
+if previous is not None and previous.remote_version == remote_version:
+    report.skipped += 1
+    continue
 ```
 
-`--dry-run` may list planned file IDs/counts but must not download source content, embed or mutate Pinecone/state.
+For changed/new sources:
 
-- [ ] **Step 5: Run tests and commit**
+```python
+payload = drive.read_bytes(record)
+content_hash = content_sha256(payload)
+doc_id = stable_doc_id("gdrive", record.file_id)
+```
+
+For Google Docs:
+
+```python
+text = payload.decode("utf-8")
+```
+
+For PDF records, write `payload` into a `TemporaryDirectory()` path and call `extract_text_from_pdf()`; never use a repository-relative temp path.
+
+Create `PrivateSourceMetadata` from allowlist metadata, detected language, `doc_id`, `record.name`, `record.file_id`, `content_hash`, and `record.modified_time`. Call:
+
+```python
+upsert_text_document(
+    text,
+    metadata,
+    namespace=config.pinecone_namespace,
+)
+```
+
+Update in-memory state only after that call returns successfully.
+
+- [ ] **Step 4: Implement CLI behavior**
+
+The CLI loads `PrivateKnowledgeConfig`, requires an allowlist path, constructs `DriveSourceClient`, and runs sync. `--dry-run` lists only counts and technical file IDs and does not download, embed, write state or mutate Pinecone.
+
+Printed report fields:
+
+```text
+scanned
+skipped
+updated
+failed
+failed_doc_ids
+```
+
+No source text is printed. Source titles are printed only in debug-title mode.
+
+- [ ] **Step 5: Verify and commit**
 
 ```bash
 uv run pytest tests/test_private_sync.py -v --no-cov
@@ -556,21 +641,23 @@ git commit -m "feat: sync private Drive knowledge into Pinecone"
 
 ---
 
-### Task 6: Add private namespace retrieval, expert/domain filters and provenance
+### Task 6: Add private retrieval filters, provenance and explicit health
 
 **Files:**
 - Modify: `src/knowledge/retriever.py`
+- Modify: `src/council/orchestrator.py`
 - Create: `tests/test_private_retrieval.py`
+- Modify: `tests/test_council.py`
 
 **Interfaces:**
 - Produces:
-  - `query_knowledge_result(...) -> KnowledgeRetrievalResult`
-  - backward-compatible `query_knowledge(...) -> list[dict[str, Any]]`
-  - `format_context_for_agent(chunks, *, include_provenance: bool = True) -> str`
+  - `query_knowledge_result(query: str, top_k: int = 5, category: str | None = None, source_type: str | None = None, domains: list[str] | None = None, experts: list[str] | None = None, min_score: float = 0.3, hybrid: bool = False, namespace: str | None = None) -> KnowledgeRetrievalResult`
+  - backward-compatible `query_knowledge()` returning only `.chunks`.
+- `CouncilDeliberation` gains `knowledge_status: str = "disabled"` and `knowledge_error_code: str | None = None`.
 
 - [ ] **Step 1: Write failing retrieval tests**
 
-With a fake Pinecone index verify:
+With fake Pinecone results, call:
 
 ```python
 result = query_knowledge_result(
@@ -581,126 +668,110 @@ result = query_knowledge_result(
 )
 ```
 
-Expected query call includes:
-
-```python
-namespace="private-test"
-```
-
-and a metadata filter containing both domain and expert constraints joined by `$and`.
-
-Also test:
-
-- `source_type="synthesis"` is accepted;
-- missing Pinecone/OpenAI configuration yields `status="unavailable"`, not a fabricated source;
-- configured query with zero matches yields `status="no_matches"`;
-- success yields `status="ok"`;
-- legacy `query_knowledge()` still returns only `.chunks`.
-
-- [ ] **Step 2: Extend filter validation**
-
-Allowed source types become:
+Assert the Pinecone call contains `namespace="private-test"` and this filter shape:
 
 ```python
 {
-    "book", "summary", "personal_note", "synthesis", "internal_doc",
-    "article", "ogólne", "web", "notion", "file"
+    "$and": [
+        {"domains": {"$in": ["pricing"]}},
+        {"experts": {"$in": ["monetization"]}},
+    ]
 }
 ```
 
-Add optional `domains: list[str] | None` and `experts: list[str] | None`. Construct an `$and` list rather than overwriting filters.
+Also test `source_type="synthesis"`, `unavailable` on missing configuration/query errors, `no_matches` for an empty successful query, `ok` for matches, and legacy `query_knowledge()` list behavior.
 
-- [ ] **Step 3: Pass the namespace to Pinecone**
+- [ ] **Step 2: Build filters without overwriting constraints**
 
-Use explicit `namespace=` whenever one is provided. Council private retrieval will pass `PINECONE_PRIVATE_NAMESPACE`; existing public/demo callers can continue without a namespace argument.
+Represent each active constraint as one clause:
 
-- [ ] **Step 4: Preserve provenance inside agent context**
+```python
+clauses: list[dict[str, Any]] = []
+if source_type:
+    clauses.append({"source_type": {"$eq": source_type}})
+if category:
+    clauses.append({"category": {"$eq": category}})
+if domains:
+    clauses.append({"domains": {"$in": domains}})
+if experts:
+    clauses.append({"experts": {"$in": experts}})
+filter_dict = {"$and": clauses} if len(clauses) > 1 else (clauses[0] if clauses else None)
+```
 
-Change `format_context_for_agent()` so the default private path uses compact provenance headers:
+Pass `namespace=namespace` to `index.query()` when provided.
+
+- [ ] **Step 3: Preserve provenance for agents**
+
+`format_context_for_agent(chunks, include_provenance=True)` returns compact internal blocks:
 
 ```text
 [SOURCE]
-title: <title>
-source_type: <source_type>
-doc_id: <doc_id>
-chunk: <chunk_index>
-score: <score>
+title: Synthetic Source
+source_type: synthesis
+doc_id: synthetic-doc-id
+chunk: 4
+score: 0.82
 
-<retrieved text>
+Synthetic retrieved text used only by the model prompt.
 ```
 
-Do not add local file paths or Drive credential information. This provenance is prompt-internal and allows future Evidence Judge logic to distinguish source types.
+Do not include local filesystem paths or credential data.
 
-- [ ] **Step 5: Remove source excerpts from display metadata by default**
+`format_sources_for_display()` returns title, source type, category/domain, chunk indices and scores. Remove the current default 300-character text excerpts; add `include_excerpt: bool = False` only if compatibility requires the field.
 
-`format_sources_for_display()` should return source title, type, category/domain, chunk indices and score, not a 300-character excerpt. If a UI path genuinely needs excerpts later, make it an explicit opt-in parameter defaulting to `False`.
+- [ ] **Step 4: Add structured retrieval status**
 
-- [ ] **Step 6: Run tests and commit**
+`query_knowledge_result()` maps outcomes as follows:
 
-```bash
-uv run pytest tests/test_private_retrieval.py -v --no-cov
-git add src/knowledge/retriever.py tests/test_private_retrieval.py
-git commit -m "feat: add private namespace and expert-aware retrieval"
+```text
+valid query + matches -> ok
+valid query + zero matches -> no_matches
+knowledge intentionally disabled by caller -> disabled
+missing embedding/Pinecone config or Pinecone query failure -> unavailable
 ```
 
----
-
-### Task 7: Propagate explicit knowledge health through Council deliberation
-
-**Files:**
-- Modify: `src/council/orchestrator.py`
-- Modify: `tests/test_council.py`
-- Modify or create: `tests/test_private_retrieval.py`
-
-**Interfaces:**
-- `CouncilDeliberation` gains backward-compatible fields:
-  - `knowledge_status: str = "disabled"`
-  - `knowledge_error_code: str | None = None`
-- `Council._get_context()` consumes `query_knowledge_result()`.
-
-- [ ] **Step 1: Write failing degraded-mode tests**
-
-Mock retrieval to return `KnowledgeRetrievalResult(status="unavailable", error_code="pinecone_unavailable")` and assert:
+Keep `query_knowledge()` as:
 
 ```python
-result.knowledge_status == "unavailable"
-result.sources == []
+def query_knowledge(*args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+    return query_knowledge_result(*args, **kwargs).chunks
 ```
 
-Also verify normal agent deliberation can continue when the mode is not `kb_only`.
+If the existing signature must remain explicit for type checking, copy its existing parameters and append the new optional parameters instead of using variadic arguments.
 
-For `kb_only`, verify the synthesis message states that the knowledge source is unavailable, not that no relevant facts exist.
+- [ ] **Step 5: Propagate status through Council**
 
-- [ ] **Step 2: Update `_get_context()`**
+Update `Council._get_context()` to return texts, display sources, status and error code. Do not log private chunks or titles.
 
-Return a structured tuple containing texts, display sources, status and error code. Do not log chunk text, prompt context or private titles. Log only status/error code and counts.
+For normal deliberation, `unavailable` means agents continue without private context and `CouncilDeliberation.knowledge_status == "unavailable"`.
 
-- [ ] **Step 3: Update `CouncilDeliberation`**
+For `kb_only`, distinguish:
 
-Populate the new status fields in every return path. Keep existing fields and defaults to avoid breaking API consumers.
+```text
+no_matches -> "Nie znaleziono pasujących źródeł w bazie wiedzy."
+unavailable -> "Prywatna baza wiedzy jest obecnie niedostępna; źródła nie zostały zweryfikowane."
+```
 
-- [ ] **Step 4: Run Council tests and commit**
+- [ ] **Step 6: Verify and commit**
 
 ```bash
-uv run pytest tests/test_council.py tests/test_private_retrieval.py -v --no-cov
-git add src/council/orchestrator.py tests/test_council.py tests/test_private_retrieval.py
-git commit -m "feat: expose explicit knowledge retrieval status"
+uv run pytest tests/test_private_retrieval.py tests/test_council.py -v --no-cov
+git add src/knowledge/retriever.py src/council/orchestrator.py tests/test_private_retrieval.py tests/test_council.py
+git commit -m "feat: add private expert-aware retrieval status"
 ```
 
 ---
 
-### Task 8: Document the private operator workflow
+### Task 7: Document, run full verification and prepare for merge
 
 **Files:**
 - Create: `docs/PRIVATE_KNOWLEDGE.md`
 - Modify: `README.md`
+- Modify only defects found by verification.
 
-**Interfaces:**
-- Operator-facing commands and config contract only; no private IDs, titles, notes or source text.
+- [ ] **Step 1: Write operator documentation**
 
-- [ ] **Step 1: Write `docs/PRIVATE_KNOWLEDGE.md`**
-
-Document this exact workflow with placeholder IDs only:
+Use a placeholder-only allowlist example:
 
 ```json
 {
@@ -720,56 +791,30 @@ Document this exact workflow with placeholder IDs only:
       "source_type": "synthesis",
       "domains": ["strategy", "marketing"],
       "experts": ["strategy", "marketing"],
-      "framework_tags": []
+      "framework_tags": [],
+      "recursive": false
     }
   ]
 }
 ```
 
-Document that the file lives outside the repository and is referenced via `PRIVATE_KNOWLEDGE_ALLOWLIST_FILE`.
-
-Document admin commands:
+Document that this JSON lives outside the repository. Document:
 
 ```bash
 uv run python scripts/sync_private_knowledge.py --dry-run
 uv run python scripts/sync_private_knowledge.py
 ```
 
-State explicitly that books, summaries and exports must never be added to Git, tests or issue attachments for this public repository.
+State explicitly that books, summaries, Drive exports, chunks and private state must not be committed to Git, tests, PR descriptions or public issue attachments.
 
 - [ ] **Step 2: Update README**
 
-Replace any wording suggesting that the repository itself is the book library with a short section linking to `docs/PRIVATE_KNOWLEDGE.md`. Preserve local PDF import as a generic feature only if it remains technically supported, and mark private-library storage as local/private rather than repository content.
+Link to `docs/PRIVATE_KNOWLEDGE.md`. Keep generic local PDF import documented only as a runtime capability; do not suggest storing books inside the repository.
 
-- [ ] **Step 3: Run docs-related safety check and commit**
-
-```bash
-uv run python scripts/check_private_corpus.py --tracked-only
-git add docs/PRIVATE_KNOWLEDGE.md README.md
-git commit -m "docs: document private Drive knowledge workflow"
-```
-
----
-
-### Task 9: Full verification and regression gate
-
-**Files:**
-- Modify only if verification exposes a defect.
-
-**Interfaces:**
-- Produces a green repository state with no production secrets or private source data.
-
-- [ ] **Step 1: Run formatting/lint checks on changed Python files**
+- [ ] **Step 3: Run lint and focused tests**
 
 ```bash
 uv run ruff check src/knowledge scripts tests
-```
-
-Expected: exit code `0`.
-
-- [ ] **Step 2: Run the private-knowledge test slice**
-
-```bash
 uv run pytest \
   tests/test_private_config.py \
   tests/test_drive_source.py \
@@ -780,28 +825,19 @@ uv run pytest \
   -v --tb=short --no-cov
 ```
 
-Expected: all pass with no real Drive/Pinecone/OpenAI credentials.
+Expected: exit code `0` for both commands with no external credentials.
 
-- [ ] **Step 3: Run the full repository suite**
+- [ ] **Step 4: Run the full regression suite and repository guard**
 
 ```bash
 uv run pytest tests/ -v --tb=short --no-cov
 uv run python tests/quality_gate.py
-```
-
-Expected: all existing tests pass and quality gate exits successfully.
-
-- [ ] **Step 4: Run the repository corpus guard**
-
-```bash
 uv run python scripts/check_private_corpus.py --tracked-only
 ```
 
-Expected: exit code `0` and no violating paths.
+Expected: all commands exit `0`.
 
-- [ ] **Step 5: Verify no secret/private configuration was committed**
-
-Run:
+- [ ] **Step 5: Verify tracked-file safety**
 
 ```bash
 git diff main...HEAD -- .env .env.example
@@ -809,46 +845,47 @@ git ls-files | grep -E '(^|/)(private_knowledge|knowledge_private|drive_exports|
 git ls-files | grep -Ei '\.(epub|mobi|azw|azw3)$' && exit 1 || true
 ```
 
-Expected: only placeholder environment names in `.env.example`; no private corpus paths or ebook formats tracked.
+Expected: `.env.example` contains placeholders only and both tracked-file searches return no matches.
 
-- [ ] **Step 6: Perform one authorized local smoke sync outside CI**
+- [ ] **Step 6: Perform one authorized local smoke sync**
 
-Only on a machine with the user's private credentials and allowlist:
+On a machine with private Drive/Pinecone/embedding credentials:
 
 ```bash
 uv run python scripts/sync_private_knowledge.py --dry-run
 uv run python scripts/sync_private_knowledge.py
 ```
 
-Success criteria: allowlisted sources are counted, vectors are written to `PINECONE_PRIVATE_NAMESPACE`, state is written under `.private_knowledge/`, and no source text appears in Git status or normal logs.
+Success means allowlisted sources are processed into `PINECONE_PRIVATE_NAMESPACE`, state remains under `.private_knowledge/`, and `git status --short` contains no private corpus/export/state files.
 
-Do not paste the resulting source text, Drive IDs, credentials or private state into the public PR.
+Do not paste Drive IDs, source text, credentials, state contents or retrieved passages into a public PR.
 
-- [ ] **Step 7: Commit any verification-only fixes, then stop**
+- [ ] **Step 7: Commit documentation or verification fixes**
 
-If no fixes were needed, do not create an empty commit.
+```bash
+git add docs/PRIVATE_KNOWLEDGE.md README.md
+git commit -m "docs: document private Drive knowledge workflow"
+```
+
+If verification required code fixes, commit each fix with the affected test before this documentation commit.
 
 ---
 
 ## Acceptance checklist
 
-The implementation is ready to merge only when all statements below are true:
-
-- [ ] `git clone` of the public repository contains no private book corpus, summaries, notes, chunks or embeddings.
-- [ ] CI passes without Drive/Pinecone/OpenAI production credentials.
-- [ ] The Drive adapter can see only explicit allowlist entries and descendants of explicitly allowlisted folders.
-- [ ] Google Docs are exported through Drive and PDFs are downloaded to temporary storage outside the repo.
+- [ ] Fresh clone contains no private corpus, summaries, notes, chunks or embeddings.
+- [ ] CI passes without production secrets.
+- [ ] Drive traversal cannot escape explicit files/folders in the allowlist.
+- [ ] Google Docs exports and PDF temporary files never land in the repo working tree.
 - [ ] Private vectors use `PINECONE_PRIVATE_NAMESPACE`.
-- [ ] Refresh upserts new content before deleting older vector versions.
-- [ ] Sync state contains only IDs, hashes, versions, counts and timestamps.
-- [ ] Normal logs never include retrieved private text and do not include source titles unless debug-title mode is explicitly enabled.
-- [ ] Retrieval can filter by domain, expert and source type while preserving source provenance internally.
-- [ ] Council reports `unavailable` when private retrieval is down and does not fabricate a consulted source.
-- [ ] Adding/updating a Drive book requires no Git commit.
+- [ ] Refresh writes the new vector version before deleting old versions.
+- [ ] Sync state contains only IDs, hashes, remote versions, timestamps and counts.
+- [ ] Normal logs contain no private text and no source titles by default.
+- [ ] Retrieval filters by domain, expert and source type and keeps provenance for the model.
+- [ ] Council reports `unavailable` on retrieval outages and never fabricates consulted sources.
+- [ ] Updating the Drive library requires no Git commit.
 
 ## Deferred to the next implementation slice
-
-These items remain intentionally out of scope until the private boundary works and passes tests:
 
 - dynamic expert router redesign;
 - framework selector;
@@ -858,4 +895,4 @@ These items remain intentionally out of scope until the private boundary works a
 - decision memory and expert calibration;
 - ChatGPT Skill front door.
 
-Those features can safely build on the private retrieval substrate created by this plan.
+These features build on the private retrieval substrate after this plan is implemented and verified.
