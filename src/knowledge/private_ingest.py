@@ -8,17 +8,17 @@ from src.knowledge.private_models import PrivateSourceMetadata
 
 
 def content_sha256(content: bytes | str) -> str:
-    raw = content.encode("utf-8") if isinstance(content, str) else content
+    raw = content.encode() if isinstance(content, str) else content
     return hashlib.sha256(raw).hexdigest()
 
 
 def stable_doc_id(source_kind: str, source_id: str) -> str:
-    raw = f"{source_kind}:{source_id}".encode("utf-8")
+    raw = f"{source_kind}:{source_id}".encode()
     return hashlib.sha256(raw).hexdigest()[:28]
 
 
 def generate_chunk_id(doc_id: str, content_hash: str, chunk_index: int) -> str:
-    raw = f"{doc_id}:{content_hash}:{chunk_index}".encode("utf-8")
+    raw = f"{doc_id}:{content_hash}:{chunk_index}".encode()
     return hashlib.sha256(raw).hexdigest()
 
 
