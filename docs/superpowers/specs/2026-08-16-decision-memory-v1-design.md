@@ -49,11 +49,11 @@ All read and update endpoints require a valid user session and scope every query
 
 ### Persistence boundary
 
-`CouncilOS` stays a pure decision engine. It does not import storage code and does not know about users.
+`CouncilOS` and `CouncilOSMode` stay pure decision/orchestration components. They do not import storage code and do not know about users.
 
-Persistence sits at the Council Mode/API boundary. `CouncilOSMode` may receive an optional completion callback or equivalent narrow hook. The API supplies a callback only when a valid authenticated user exists.
+Persistence lives in `src/api/decision_memory.py`, installed on the FastAPI application as a focused REST router plus an ASGI middleware. The middleware only inspects the existing `/api/council/mode/stream` surface for `mode=council_os`. For an authenticated request, it validates the structured `council_os_result` event as `CouncilOSResult`, persists a sanitized snapshot, and adds `decision_id` to that SSE event when capture succeeds.
 
-This keeps orchestration testable and prevents storage failures from affecting reasoning behavior.
+This keeps storage outside the reasoning engine and specialty-mode implementation. It also makes persistence failure best-effort: the original Council OS SSE event passes through unchanged when session validation, result validation, or storage fails.
 
 ## Data model
 
@@ -152,18 +152,18 @@ The storage API accepts a `CouncilOSResult` or a dedicated sanitized snapshot mo
 
 For `/api/council/mode/stream?mode=council_os...`:
 
-1. Resolve `X-User-Session` before creating the stream.
-2. Do not reject the request if the header is absent or invalid; existing anonymous behavior remains supported.
-3. When authenticated, supply a completion hook to `CouncilOSMode`.
-4. After `CouncilOS.deliberate()` returns a typed result, invoke the hook with the query and result.
-5. Persist before the final `complete` event where practical, but never expose database internals in SSE.
-6. Add `decision_id` to the `council_os_result` event only when persistence succeeds.
+1. The Decision Memory middleware reads `X-User-Session` and resolves it through the existing session validator.
+2. Missing or invalid sessions pass through unchanged, preserving anonymous Council OS behavior.
+3. For an authenticated request, the middleware observes the structured SSE stream without changing `CouncilOSMode`.
+4. When the `council_os_result` event arrives, the middleware validates its `result` payload as `CouncilOSResult`.
+5. The store explicitly maps approved fields into SQLite. Storage errors are swallowed after a fixed, sanitized log message.
+6. `decision_id` is added to the `council_os_result` event only when persistence succeeds.
 
 The structured `CouncilOSResult` Pydantic model does not gain storage-specific fields.
 
 ### Idempotency
 
-One mode execution should create at most one decision row. The completion callback is invoked once by `CouncilOSMode` after deliberation. No automatic deduplication by query text is attempted because repeated runs may intentionally represent distinct decisions at different times.
+One mode execution creates at most one decision row. The middleware marks the response as captured after the first successfully persisted `council_os_result` event. No automatic deduplication by query text is attempted because repeated runs may intentionally represent distinct decisions at different times.
 
 ## Outcome and postmortem API
 
@@ -260,20 +260,18 @@ This is deliberately labeled `brier_like_error`, not a multiclass Brier score. T
 
 ## Error handling
 
-- Storage initialization uses `CREATE TABLE IF NOT EXISTS` and indexes, guarded by a module-level lock like existing SQLite storage.
+- Storage initialization uses `CREATE TABLE IF NOT EXISTS` and indexes, guarded by a per-store lock.
 - Malformed JSON in stored rows is treated as a storage error; API returns a normalized 500 rather than silently inventing defaults.
 - Cross-user reads/updates return 404.
 - Invalid verdict/outcome enums return 422 through Pydantic validation.
-- Automatic capture failures are logged without query text, memo text, retrieved text, titles, or source ids. The Council OS stream still completes.
+- Automatic capture failures are logged with fixed messages that omit query text, memo text, retrieved text, titles, source ids, and exception messages. The Council OS stream still completes.
 - Calibration over zero scored decisions returns an empty list and totals with `sample_size=0`.
 
 ## API integration
 
-Add request/response models in `main.py` only where needed, but keep database logic in `src/storage/decision_memory.py`.
+`src/api/decision_memory.py` owns the request model, REST router, authentication helper, and Council OS capture middleware. `main.py` only imports and installs that module on the FastAPI application and adds `"/api/decision-memory"` to the existing core API contract prefixes.
 
-Add `"/api/decision-memory"` to the core API contract path set so validation/rate-limit/internal errors follow the existing normalized response envelope where practical.
-
-Council mode routing remains backward compatible for all existing modes.
+Council mode routing remains backward compatible for all existing modes. `CouncilOS` and `CouncilOSMode` have no Decision Memory dependency.
 
 ## Testing
 
