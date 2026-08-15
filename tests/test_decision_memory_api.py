@@ -220,3 +220,20 @@ def test_calibration_endpoint_uses_resolved_outcomes(tmp_path):
     experts = {item["expert_id"]: item for item in after.json()["experts"]}
     assert experts["strategy"]["hit_rate"] == 1.0
     assert experts["chairman"]["hit_rate"] == 1.0
+
+
+def test_storage_exception_is_mapped_to_fixed_500_without_sensitive_details(tmp_path):
+    client, store = make_client(tmp_path)
+
+    def fail_list(*args, **kwargs):
+        raise RuntimeError("SENSITIVE_PRIVATE_SENTINEL")
+
+    store.list_decisions = fail_list
+    response = client.get(
+        "/api/decision-memory",
+        headers={"X-User-Session": "token-a"},
+    )
+
+    assert response.status_code == 500
+    assert response.json()["detail"] == "Decision Memory storage error"
+    assert "SENSITIVE_PRIVATE_SENTINEL" not in response.text
