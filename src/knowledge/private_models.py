@@ -69,5 +69,6 @@ class SyncReport(BaseModel):
     scanned: int = 0
     skipped: int = 0
     updated: int = 0
+    deleted: int = 0
     failed: int = 0
     failed_doc_ids: list[str] = Field(default_factory=list)
