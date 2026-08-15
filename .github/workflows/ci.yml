@@ -56,6 +56,16 @@ jobs:
           src/council/business_routing.py
           src/council/council_os.py
 
+      - name: Decision Memory focused tests
+        run: uv run pytest tests/test_decision_memory_*.py -v --tb=short --no-cov
+
+      - name: Decision Memory focused lint
+        run: >-
+          uv run ruff check
+          src/api/decision_memory.py
+          src/storage/decision_memory.py
+          tests/test_decision_memory_*.py
+
       - name: Public repository corpus guard
         run: uv run python scripts/check_private_corpus.py --tracked-only
 
