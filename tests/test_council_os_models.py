@@ -1,5 +1,4 @@
 import pytest
-
 import src.council.council_os_models as models
 
 
