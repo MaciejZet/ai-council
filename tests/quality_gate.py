@@ -38,58 +38,73 @@ def _score_case(case: dict[str, Any]) -> tuple[float, dict[str, Any]]:
     score = (
         (0.35 if critic_ok else 0.0)
         + (0.35 if weighted_ok else 0.0)
-        + (0.2 if risk_ok else 0.0)
-        + (0.1 if reason_ok else 0.0)
+        + (0.20 if risk_ok else 0.0)
+        + (0.10 if reason_ok else 0.0)
     )
-    return score, {
-        "critic_ok": critic_ok,
-        "weighted_ok": weighted_ok,
-        "risk_ok": risk_ok,
-        "reason_ok": reason_ok,
+    detail = {
+        "id": case["id"],
+        "category": case["category"],
+        "score": round(score, 4),
         "risk_score": decision.risk_score,
+        "critic": decision.applied_critic,
+        "weighted": decision.applied_weighted_voting,
         "reason": decision.reason,
+        "checks": {
+            "critic_ok": critic_ok,
+            "weighted_ok": weighted_ok,
+            "risk_ok": risk_ok,
+            "reason_ok": reason_ok,
+        },
     }
-
-
-def evaluate_dataset(dataset: list[dict[str, Any]]) -> tuple[float, list[dict[str, Any]]]:
-    results: list[dict[str, Any]] = []
-    scores: list[float] = []
-    for case in dataset:
-        score, details = _score_case(case)
-        scores.append(score)
-        results.append(
-            {
-                "id": case["id"],
-                "score": round(score, 4),
-                **details,
-            }
-        )
-    return mean(scores) if scores else 0.0, results
+    return score, detail
 
 
 def main() -> int:
     dataset = _load_json(DATASET_PATH)
     baseline = _load_json(BASELINE_PATH)
-    current_score, results = evaluate_dataset(dataset)
-    baseline_score = float(baseline.get("score", 0.0))
-    tolerance = float(baseline.get("tolerance", 0.0))
-    threshold = baseline_score - tolerance
+    baseline_score = float(baseline.get("baseline_score", 0.0))
+    tolerance = float(baseline.get("regression_tolerance", 0.05))
+    fail_threshold = baseline_score * (1.0 - tolerance)
 
-    print(
-        json.dumps(
-            {
-                "current_score": round(current_score, 4),
-                "baseline_score": baseline_score,
-                "tolerance": tolerance,
-                "threshold": round(threshold, 4),
-                "cases": results,
-            },
-            ensure_ascii=False,
-            indent=2,
+    details: list[dict[str, Any]] = []
+    scores: list[float] = []
+    for case in dataset:
+        score, detail = _score_case(case)
+        scores.append(score)
+        details.append(detail)
+
+    current_score = mean(scores) if scores else 0.0
+    print("== Quality Gate ==")
+    print(f"Dataset cases: {len(dataset)}")
+    print(f"Current score: {current_score:.4f}")
+    print(f"Baseline score: {baseline_score:.4f}")
+    print(f"Fail threshold: {fail_threshold:.4f}")
+    print("")
+    print("Per-case results:")
+    for d in details:
+        print(
+            f"- {d['id']} [{d['category']}]: score={d['score']:.4f}, "
+            f"risk={d['risk_score']:.3f}, critic={d['critic']}, weighted={d['weighted']}"
         )
-    )
 
-    return 0 if current_score >= threshold else 1
+    if current_score < fail_threshold:
+        print("")
+        print(
+            "FAIL: quality regression exceeded tolerance "
+            f"({current_score:.4f} < {fail_threshold:.4f})."
+        )
+        return 1
+
+    if current_score < baseline_score:
+        print("")
+        print(
+            "WARNING: quality score below baseline but within tolerance "
+            f"({current_score:.4f} < {baseline_score:.4f})."
+        )
+
+    print("")
+    print("PASS: quality gate satisfied.")
+    return 0
 
 
 if __name__ == "__main__":
