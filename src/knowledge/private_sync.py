@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import json
 import tempfile
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Callable
 
 from src.knowledge.drive_source import GOOGLE_DOC_MIME, DriveSourceClient, DriveSourceRecord
 from src.knowledge.ingest import extract_text_from_pdf
