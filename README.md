@@ -85,6 +85,29 @@ Uruchamia wbudowany `uvicorn` na porcie **8000** (zgodnie z powyższym).
 - **Custom agents**: Create your own specialists with custom prompts
 - **Dynamic control**: Enable/disable agents in real-time
 
+### 🏛️ Council OS decision mode
+
+`council_os` is the decision-oriented council pipeline. It routes 4-5 relevant business experts from Strategy, Marketing, Sales, Offer & Pricing, Product & Customer, Growth, and Operations. Red Team, Evidence Judge, and Chairman run as separate review roles after the domain experts.
+
+The sequence is fixed:
+
+```text
+problem profile and routing
+→ per-expert private RAG
+→ blind independent memos
+→ peer rebuttals
+→ Red Team
+→ Evidence Judge
+→ Chairman
+→ GO / NO-GO / TEST / DEFER
+```
+
+Each domain expert gets its own knowledge filters and completes the first memo before seeing peer opinions. Claims can be labeled as supplied-evidence facts (`F`), assumptions (`A`), inferences (`I`), framework-derived claims (`FMW`), or judgment (`O`). If more than 80% of successful blind votes point in the same direction, Red Team is explicitly required to construct a credible contrarian case.
+
+The Chairman runs last and returns a typed verdict with confidence, consensus, the main disagreement, minority report, assumptions, evidence gaps, conditions that would change the decision, and an optional experiment with a metric, threshold, timeline, and kill criteria.
+
+When every role uses the same provider and model, Council OS still makes separate blind calls with isolated prompts. That reduces prompt-level groupthink, but it does not create independent models. Different providers can be wired in later without changing the decision contract.
+
 ### 📚 Intelligent Knowledge Base
 - **RAG (Retrieval-Augmented Generation)** - Context from your documents
 - **Automatic categorization** - Marketing, strategy, business, productivity
@@ -127,6 +150,8 @@ Private books, summaries, notes, Drive exports, chunks and embeddings are not st
 - `POST /api/deliberate` - AI council deliberation
 - `GET /api/deliberate/stream` - Streaming deliberation
 - `GET /api/debate/stream` - Multi-round debate
+- `GET /api/council/modes` - Available council modes, including `council_os`
+- `GET /api/council/mode/stream?mode=council_os&query=...` - Council OS structured decision stream
 
 ### Management
 - `GET /api/agents` - List all agents
