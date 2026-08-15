@@ -33,6 +33,21 @@ jobs:
       - name: Private knowledge focused tests
         run: uv run pytest tests/test_private_*.py tests/test_council.py -v --tb=short --no-cov
 
+      - name: Private knowledge focused lint
+        run: >-
+          uv run ruff check
+          src/knowledge/private_models.py
+          src/knowledge/private_config.py
+          src/knowledge/drive_source.py
+          src/knowledge/private_ingest.py
+          src/knowledge/private_sync.py
+          src/knowledge/retriever.py
+          src/council/orchestrator.py
+          scripts/check_private_corpus.py
+          scripts/sync_private_knowledge.py
+          tests/test_private_*.py
+          tests/test_council.py
+
       - name: Public repository corpus guard
         run: uv run python scripts/check_private_corpus.py --tracked-only
 
