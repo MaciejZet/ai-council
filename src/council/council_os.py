@@ -7,14 +7,21 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from src.council.business_routing import early_consensus_vote
+from src.council.business_routing import (
+    early_consensus_vote,
+    profile_problem,
+    route_experts,
+)
 from src.council.council_os_models import (
+    CouncilOSResult,
+    CouncilVerdict,
     EvidenceAssessment,
     ExpertMemo,
     KnowledgeStatus,
     ProblemProfile,
     Rebuttal,
     RedTeamReport,
+    defer_verdict,
     extract_json_object,
 )
 from src.council.expert_registry import EXPERT_REGISTRY, ExpertDefinition
@@ -354,3 +361,119 @@ class CouncilOS:
                 framework_fact_confusions=[],
                 parse_error=True,
             )
+
+    async def _run_chairman(
+        self,
+        query: str,
+        profile: ProblemProfile,
+        routed_experts: list[ExpertDefinition],
+        memos: list[ExpertMemo],
+        rebuttals: list[Rebuttal],
+        red_team: RedTeamReport,
+        evidence: EvidenceAssessment,
+        errors: list[str],
+    ) -> CouncilVerdict:
+        system_prompt = "\n".join(
+            [
+                "[STAGE:CHAIRMAN]",
+                "[EXPERT_ID:chairman]",
+                EXPERT_REGISTRY["chairman"].system_prompt,
+                "You are called only after domain experts, rebuttals, Red Team and Evidence Judge.",
+                "Prefer TEST when a reversible discriminating experiment can resolve the key uncertainty.",
+                "Use DEFER when a critical evidence outage or unresolved dependency blocks a responsible decision.",
+                "Return one JSON object only with verdict, recommendation, confidence, consensus, "
+                "key_disagreement, minority_report, assumptions, evidence_gaps, "
+                "what_would_change_decision and next_experiment.",
+                "next_experiment must be null or contain action, metric, threshold, timeline, kill_criteria.",
+            ]
+        )
+        user_prompt = "\n".join(
+            [
+                f"Decision question: {query}",
+                f"Problem profile: {profile.model_dump_json()}",
+                "Routed experts: " + json.dumps([expert.id for expert in routed_experts]),
+                f"Blind memos: {_dump_models(memos)}",
+                f"Rebuttals: {_dump_models(rebuttals)}",
+                f"Red Team: {red_team.model_dump_json()}",
+                f"Evidence Judge: {evidence.model_dump_json()}",
+                "Orchestration errors: " + json.dumps(errors),
+                "Do not imply unavailable private knowledge was consulted or verified.",
+            ]
+        )
+        try:
+            response = await self.llm.generate(
+                system_prompt,
+                user_prompt,
+                temperature=0.2,
+                max_tokens=1800,
+            )
+            return CouncilVerdict.model_validate(extract_json_object(response.content))
+        except Exception:
+            return defer_verdict("chairman_parse_error")
+
+    async def deliberate(self, query: str) -> CouncilOSResult:
+        profile = profile_problem(query)
+        experts = route_experts(profile)
+        blind = await self._run_blind_memos(query, experts)
+        errors = list(blind.errors)
+
+        if len(blind.memos) < 2:
+            return CouncilOSResult(
+                profile=profile,
+                routed_experts=[expert.id for expert in experts],
+                memos=blind.memos,
+                rebuttals=[],
+                red_team=None,
+                evidence=None,
+                verdict=defer_verdict("insufficient_domain_memos"),
+                knowledge_status_by_expert=blind.knowledge_status_by_expert,
+                errors=errors,
+            )
+
+        rebuttals = await self._run_rebuttals(query, profile, experts, blind.memos)
+        rebuttal_ids = {rebuttal.expert_id for rebuttal in rebuttals}
+        errors.extend(
+            f"rebuttal_missing:{memo.expert_id}"
+            for memo in blind.memos
+            if memo.expert_id not in rebuttal_ids
+        )
+
+        red_team = await self._run_red_team(query, profile, blind.memos, rebuttals)
+        if red_team.parse_error:
+            errors.append("red_team_parse_error")
+
+        evidence = await self._run_evidence_judge(
+            query,
+            profile,
+            blind,
+            blind.memos,
+            rebuttals,
+            red_team,
+        )
+        if evidence.parse_error:
+            errors.append("evidence_judge_parse_error")
+
+        verdict = await self._run_chairman(
+            query,
+            profile,
+            experts,
+            blind.memos,
+            rebuttals,
+            red_team,
+            evidence,
+            errors,
+        )
+        if "chairman_parse_error" in verdict.evidence_gaps:
+            errors.append("chairman_parse_error")
+
+        return CouncilOSResult(
+            profile=profile,
+            routed_experts=[expert.id for expert in experts],
+            memos=blind.memos,
+            rebuttals=rebuttals,
+            red_team=red_team,
+            evidence=evidence,
+            verdict=verdict,
+            knowledge_status_by_expert=blind.knowledge_status_by_expert,
+            errors=errors,
+        )
