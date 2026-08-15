@@ -24,7 +24,7 @@ class PrivateKnowledgeConfig:
     enabled: bool
 
     @classmethod
-    def from_env(cls) -> "PrivateKnowledgeConfig":
+    def from_env(cls) -> PrivateKnowledgeConfig:
         allowlist_raw = os.getenv("PRIVATE_KNOWLEDGE_ALLOWLIST_FILE", "").strip()
         allowlist_file = Path(allowlist_raw).expanduser() if allowlist_raw else None
         state_file = Path(
