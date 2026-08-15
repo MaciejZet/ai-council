@@ -7,7 +7,7 @@ Odpytuje Pinecone i zwraca relevantny kontekst wraz z bezpieczną proweniencją.
 from __future__ import annotations
 
 import os
-from typing import Any, Optional
+from typing import Any
 
 from dotenv import load_dotenv
 
@@ -32,7 +32,7 @@ def _keyword_overlap_score(query: str, text: str) -> float:
     return hits / max(len(q_tokens), 1)
 
 
-def _validate_metadata_filters(category: Optional[str], source_type: Optional[str]) -> None:
+def _validate_metadata_filters(category: str | None, source_type: str | None) -> None:
     allowed_categories = set(get_all_categories())
     if category is not None and category not in allowed_categories:
         raise KnowledgeFilterError(
