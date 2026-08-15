@@ -7,8 +7,11 @@ from src.council.council_os_models import CouncilOSResult, ProblemProfile, defer
 
 
 class FakeCouncilOS:
-    def __init__(self, llm):
+    last_use_knowledge_base = None
+
+    def __init__(self, llm, *, use_knowledge_base=True):
         self.llm = llm
+        type(self).last_use_knowledge_base = use_knowledge_base
 
     async def deliberate(self, query):
         return CouncilOSResult(
@@ -58,3 +61,14 @@ async def test_council_os_mode_stream_emits_sanitized_structured_result(monkeypa
     assert '"verdict": "DEFER"' in combined
     assert "PRIVATE_SYNTHETIC_CHUNK" not in combined
     assert "source_inventory" not in combined
+    assert FakeCouncilOS.last_use_knowledge_base is True
+
+
+@pytest.mark.asyncio
+async def test_council_os_mode_respects_disabled_knowledge_base(monkeypatch):
+    monkeypatch.setattr(modes_module, "CouncilOS", FakeCouncilOS, raising=False)
+    mode = modes_module.CouncilOSMode(use_knowledge_base=False)
+
+    _ = [event async for event in mode.run_stream("synthetic question", llm=object())]
+
+    assert FakeCouncilOS.last_use_knowledge_base is False
