@@ -13,6 +13,7 @@ from src.agents.core_agents import Strategist, Analyst, Practitioner, Expert, Sy
 from src.council.council_os import CouncilOS
 from src.llm_providers import LLMProvider, OpenAIProvider
 from src.knowledge.retriever import query_knowledge, format_sources_for_display
+from src.knowledge.private_models import KnowledgeRetrievalResult
 
 
 class CouncilMode(ABC):
@@ -612,7 +613,15 @@ class CouncilOSMode(CouncilMode):
         llm = llm or OpenAIProvider()
         yield self._sse("mode_start", {"mode": self.name, "emoji": self.emoji})
 
-        result = await CouncilOS(llm).deliberate(query)
+        if self.use_knowledge_base:
+            council = CouncilOS(llm)
+        else:
+            def disabled_retriever(query: str, **kwargs: Any) -> KnowledgeRetrievalResult:
+                return KnowledgeRetrievalResult(status="disabled")
+
+            council = CouncilOS(llm, retriever=disabled_retriever)
+
+        result = await council.deliberate(query)
         yield self._sse(
             "council_os_result",
             {"result": result.model_dump(mode="json")},
