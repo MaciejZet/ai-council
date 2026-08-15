@@ -48,6 +48,14 @@ jobs:
           tests/test_private_*.py
           tests/test_council.py
 
+      - name: Council OS focused lint
+        run: >-
+          uv run ruff check
+          src/council/council_os_models.py
+          src/council/expert_registry.py
+          src/council/business_routing.py
+          src/council/council_os.py
+
       - name: Public repository corpus guard
         run: uv run python scripts/check_private_corpus.py --tracked-only
 
