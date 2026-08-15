@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import re
-from enum import Enum
+from enum import StrEnum
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -12,14 +12,14 @@ Reversibility = Literal["reversible", "hard_to_reverse"]
 RiskLevel = Literal["low", "medium", "high"]
 
 
-class DecisionVote(str, Enum):
+class DecisionVote(StrEnum):
     GO = "GO"
     NO_GO = "NO-GO"
     TEST = "TEST"
     DEFER = "DEFER"
 
 
-class ClaimLabel(str, Enum):
+class ClaimLabel(StrEnum):
     FACT = "F"
     ASSUMPTION = "A"
     INFERENCE = "I"
