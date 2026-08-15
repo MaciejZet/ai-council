@@ -7,11 +7,11 @@ from src.council.council_os_models import CouncilOSResult, ProblemProfile, defer
 
 
 class FakeCouncilOS:
-    last_use_knowledge_base = None
+    last_retriever = None
 
-    def __init__(self, llm, *, use_knowledge_base=True):
+    def __init__(self, llm, *, retriever=None):
         self.llm = llm
-        type(self).last_use_knowledge_base = use_knowledge_base
+        type(self).last_retriever = retriever
 
     async def deliberate(self, query):
         return CouncilOSResult(
@@ -61,7 +61,7 @@ async def test_council_os_mode_stream_emits_sanitized_structured_result(monkeypa
     assert '"verdict": "DEFER"' in combined
     assert "PRIVATE_SYNTHETIC_CHUNK" not in combined
     assert "source_inventory" not in combined
-    assert FakeCouncilOS.last_use_knowledge_base is True
+    assert FakeCouncilOS.last_retriever is None
 
 
 @pytest.mark.asyncio
@@ -71,4 +71,6 @@ async def test_council_os_mode_respects_disabled_knowledge_base(monkeypatch):
 
     _ = [event async for event in mode.run_stream("synthetic question", llm=object())]
 
-    assert FakeCouncilOS.last_use_knowledge_base is False
+    assert FakeCouncilOS.last_retriever is not None
+    disabled_result = FakeCouncilOS.last_retriever("synthetic query")
+    assert disabled_result.status == "disabled"
