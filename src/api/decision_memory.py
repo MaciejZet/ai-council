@@ -129,6 +129,15 @@ def install_decision_memory(
             raise HTTPException(status_code=401, detail="Invalid or missing X-User-Session")
         return user_id
 
+    def call_store(operation: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        try:
+            return operation(*args, **kwargs)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.warning("Decision Memory storage operation failed")
+            raise HTTPException(status_code=500, detail="Decision Memory storage error") from exc
+
     @router.get("")
     async def list_decisions(
         request: Request,
@@ -138,7 +147,8 @@ def install_decision_memory(
         outcome_status: OutcomeStatus | None = None,
     ) -> list[dict[str, Any]]:
         user_id = require_user(request)
-        return store.list_decisions(
+        return call_store(
+            store.list_decisions,
             user_id,
             limit=limit,
             primary_domain=primary_domain,
@@ -149,12 +159,12 @@ def install_decision_memory(
     @router.get("/calibration")
     async def calibration(request: Request) -> dict[str, Any]:
         user_id = require_user(request)
-        return store.calibration_report(user_id)
+        return call_store(store.calibration_report, user_id)
 
     @router.get("/{decision_id}")
     async def get_decision(request: Request, decision_id: str) -> dict[str, Any]:
         user_id = require_user(request)
-        decision = store.get_decision(user_id, decision_id)
+        decision = call_store(store.get_decision, user_id, decision_id)
         if decision is None:
             raise HTTPException(status_code=404, detail="Decision not found")
         return decision
@@ -166,7 +176,8 @@ def install_decision_memory(
         body: DecisionOutcomeRequest,
     ) -> dict[str, Any]:
         user_id = require_user(request)
-        outcome = store.upsert_outcome(
+        outcome = call_store(
+            store.upsert_outcome,
             user_id,
             decision_id,
             status=body.status,
