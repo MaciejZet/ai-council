@@ -1,4 +1,4 @@
-from src.knowledge import ingest
+from src.knowledge import private_ingest as ingest
 from src.knowledge.private_models import PrivateSourceMetadata
 
 
@@ -47,7 +47,9 @@ def test_upsert_text_document_uses_private_namespace_and_metadata(monkeypatch):
     monkeypatch.setattr(
         ingest,
         "chunk_text",
-        lambda text: [{"text": "synthetic chunk", "chunk_index": 0, "start_char": 0, "end_char": 15}],
+        lambda text: [
+            {"text": "synthetic chunk", "chunk_index": 0, "start_char": 0, "end_char": 15}
+        ],
     )
 
     result = ingest.upsert_text_document("synthetic", metadata(), namespace="private-test")
@@ -68,7 +70,9 @@ def test_upsert_failure_does_not_delete_previous_vectors(monkeypatch):
     monkeypatch.setattr(
         ingest,
         "chunk_text",
-        lambda text: [{"text": "synthetic", "chunk_index": 0, "start_char": 0, "end_char": 9}],
+        lambda text: [
+            {"text": "synthetic", "chunk_index": 0, "start_char": 0, "end_char": 9}
+        ],
     )
 
     try:
