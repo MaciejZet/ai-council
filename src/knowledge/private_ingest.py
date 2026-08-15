@@ -26,6 +26,23 @@ def _with_namespace(namespace: str | None) -> dict[str, str]:
     return {"namespace": namespace} if namespace is not None else {}
 
 
+def _version_filter(doc_id: str, content_hash: str) -> dict[str, Any]:
+    return {
+        "$and": [
+            {"doc_id": {"$eq": doc_id}},
+            {"content_hash": {"$eq": content_hash}},
+        ]
+    }
+
+
+def delete_document_vectors(doc_id: str, *, namespace: str | None = None) -> bool:
+    if not doc_id.strip():
+        return False
+    index = get_pinecone_index()
+    index.delete(filter={"doc_id": {"$eq": doc_id.strip()}}, **_with_namespace(namespace))
+    return True
+
+
 def upsert_text_document(
     text: str,
     metadata: PrivateSourceMetadata,
@@ -76,17 +93,30 @@ def upsert_text_document(
         )
 
     namespace_kwargs = _with_namespace(namespace)
-    for offset in range(0, len(vectors), batch_size):
-        batch = vectors[offset : offset + batch_size]
-        index.upsert(vectors=batch, **namespace_kwargs)
+    successful_batches = 0
+    try:
+        for offset in range(0, len(vectors), batch_size):
+            batch = vectors[offset : offset + batch_size]
+            index.upsert(vectors=batch, **namespace_kwargs)
+            successful_batches += 1
 
-    stale_filter = {
-        "$and": [
-            {"doc_id": {"$eq": metadata.doc_id}},
-            {"content_hash": {"$ne": metadata.content_hash}},
-        ]
-    }
-    index.delete(filter=stale_filter, **namespace_kwargs)
+        stale_filter = {
+            "$and": [
+                {"doc_id": {"$eq": metadata.doc_id}},
+                {"content_hash": {"$ne": metadata.content_hash}},
+            ]
+        }
+        index.delete(filter=stale_filter, **namespace_kwargs)
+    except Exception:
+        if successful_batches:
+            try:
+                index.delete(
+                    filter=_version_filter(metadata.doc_id, metadata.content_hash),
+                    **namespace_kwargs,
+                )
+            except Exception:
+                pass
+        raise
 
     return {
         "status": "success",
