@@ -25,6 +25,46 @@ def _json_load(value: str) -> Any:
     return json.loads(value)
 
 
+def _aggregate_predictions(predictions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    grouped: dict[str, dict[str, float | int]] = {}
+    for prediction in predictions:
+        expert_id = str(prediction["expert_id"])
+        predicted_vote = str(prediction["predicted_vote"])
+        resolved_vote = str(prediction["resolved_vote"])
+        confidence = float(prediction["confidence"])
+        correctness = 1.0 if predicted_vote == resolved_vote else 0.0
+        values = grouped.setdefault(
+            expert_id,
+            {
+                "sample_size": 0,
+                "correct_count": 0,
+                "confidence_sum": 0.0,
+                "error_sum": 0.0,
+            },
+        )
+        values["sample_size"] += 1
+        values["correct_count"] += int(correctness)
+        values["confidence_sum"] += confidence
+        values["error_sum"] += (confidence - correctness) ** 2
+
+    output: list[dict[str, Any]] = []
+    for expert_id in sorted(grouped):
+        values = grouped[expert_id]
+        sample_size = int(values["sample_size"])
+        correct_count = int(values["correct_count"])
+        output.append(
+            {
+                "expert_id": expert_id,
+                "sample_size": sample_size,
+                "correct_count": correct_count,
+                "hit_rate": round(correct_count / sample_size, 6),
+                "mean_confidence": round(float(values["confidence_sum"]) / sample_size, 6),
+                "brier_like_error": round(float(values["error_sum"]) / sample_size, 6),
+            }
+        )
+    return output
+
+
 class DecisionMemoryStore:
     def __init__(self, db_path: Path | str | None = None):
         self.db_path = Path(db_path) if db_path is not None else _DEFAULT_DB_PATH
@@ -329,3 +369,131 @@ class DecisionMemoryStore:
                 }
             )
         return items
+
+    def upsert_outcome(
+        self,
+        user_id: str,
+        decision_id: str,
+        *,
+        status: str,
+        resolved_vote: str | None,
+        experiment_result: str | None,
+        postmortem: str | None,
+        notes: str | None,
+    ) -> dict[str, Any] | None:
+        now = _now_iso()
+        with self._lock, self._connect() as conn:
+            owner = conn.execute(
+                "SELECT 1 FROM decisions WHERE id = ? AND user_id = ?",
+                (decision_id, user_id),
+            ).fetchone()
+            if owner is None:
+                return None
+
+            conn.execute(
+                """
+                INSERT INTO decision_outcomes (
+                    decision_id, user_id, updated_at, status, resolved_vote,
+                    experiment_result, postmortem, notes
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(decision_id) DO UPDATE SET
+                    user_id = excluded.user_id,
+                    updated_at = excluded.updated_at,
+                    status = excluded.status,
+                    resolved_vote = excluded.resolved_vote,
+                    experiment_result = excluded.experiment_result,
+                    postmortem = excluded.postmortem,
+                    notes = excluded.notes
+                """,
+                (
+                    decision_id,
+                    user_id,
+                    now,
+                    status,
+                    resolved_vote,
+                    experiment_result,
+                    postmortem,
+                    notes,
+                ),
+            )
+            conn.execute(
+                "UPDATE decisions SET updated_at = ? WHERE id = ? AND user_id = ?",
+                (now, decision_id, user_id),
+            )
+            outcome = conn.execute(
+                "SELECT * FROM decision_outcomes WHERE decision_id = ? AND user_id = ?",
+                (decision_id, user_id),
+            ).fetchone()
+
+        return self._outcome_from_row(outcome)
+
+    def calibration_report(self, user_id: str) -> dict[str, Any]:
+        with self._lock, self._connect() as conn:
+            decisions = conn.execute(
+                """
+                SELECT d.id, d.primary_domain, d.verdict, d.verdict_confidence,
+                       o.resolved_vote
+                FROM decisions AS d
+                JOIN decision_outcomes AS o
+                  ON o.decision_id = d.id AND o.user_id = d.user_id
+                WHERE d.user_id = ?
+                  AND o.user_id = ?
+                  AND o.resolved_vote IS NOT NULL
+                ORDER BY d.created_at, d.id
+                """,
+                (user_id, user_id),
+            ).fetchall()
+            vote_rows = conn.execute(
+                """
+                SELECT v.expert_id, v.blind_vote, v.blind_confidence,
+                       d.primary_domain, o.resolved_vote
+                FROM decision_expert_votes AS v
+                JOIN decisions AS d ON d.id = v.decision_id
+                JOIN decision_outcomes AS o
+                  ON o.decision_id = d.id AND o.user_id = d.user_id
+                WHERE d.user_id = ?
+                  AND o.user_id = ?
+                  AND o.resolved_vote IS NOT NULL
+                ORDER BY d.created_at, d.id, v.expert_id
+                """,
+                (user_id, user_id),
+            ).fetchall()
+
+        if not decisions:
+            return {"sample_size": 0, "experts": [], "domains": {}}
+
+        predictions: list[dict[str, Any]] = [
+            {
+                "expert_id": row["expert_id"],
+                "predicted_vote": row["blind_vote"],
+                "confidence": row["blind_confidence"],
+                "resolved_vote": row["resolved_vote"],
+                "primary_domain": row["primary_domain"],
+            }
+            for row in vote_rows
+        ]
+        predictions.extend(
+            {
+                "expert_id": "chairman",
+                "predicted_vote": row["verdict"],
+                "confidence": row["verdict_confidence"],
+                "resolved_vote": row["resolved_vote"],
+                "primary_domain": row["primary_domain"],
+            }
+            for row in decisions
+        )
+
+        domains: dict[str, list[dict[str, Any]]] = {}
+        for domain in sorted({str(row["primary_domain"]) for row in decisions}):
+            domain_predictions = [
+                prediction
+                for prediction in predictions
+                if prediction["primary_domain"] == domain
+            ]
+            domains[domain] = _aggregate_predictions(domain_predictions)
+
+        return {
+            "sample_size": len(decisions),
+            "experts": _aggregate_predictions(predictions),
+            "domains": domains,
+        }
