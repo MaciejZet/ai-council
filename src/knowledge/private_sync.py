@@ -9,7 +9,12 @@ from pathlib import Path
 from src.knowledge.drive_source import GOOGLE_DOC_MIME, DriveSourceClient, DriveSourceRecord
 from src.knowledge.ingest import extract_text_from_pdf
 from src.knowledge.private_config import PrivateKnowledgeConfig
-from src.knowledge.private_ingest import content_sha256, stable_doc_id, upsert_text_document
+from src.knowledge.private_ingest import (
+    content_sha256,
+    delete_document_vectors,
+    stable_doc_id,
+    upsert_text_document,
+)
 from src.knowledge.private_models import (
     PrivateSourceMetadata,
     SyncDocumentState,
@@ -21,6 +26,7 @@ from src.utils.logger import setup_logger
 _sync_log = setup_logger("ai_council.private_knowledge.sync")
 
 UpsertFunc = Callable[..., dict]
+DeleteFunc = Callable[..., bool]
 
 
 def _detect_language(text: str, name: str) -> str:
@@ -35,10 +41,12 @@ class PrivateKnowledgeSync:
         drive: DriveSourceClient,
         *,
         upsert_func: UpsertFunc = upsert_text_document,
+        delete_func: DeleteFunc = delete_document_vectors,
     ):
         self.config = config
         self.drive = drive
         self.upsert_func = upsert_func
+        self.delete_func = delete_func
 
     def _load_state(self) -> SyncState:
         if not self.config.state_file.exists():
@@ -66,12 +74,47 @@ class PrivateKnowledgeSync:
                 return extract_text_from_pdf(str(pdf_path))
         return payload.decode("utf-8", errors="replace")
 
+    def _prune_removed_sources(
+        self,
+        state: SyncState,
+        active_file_ids: set[str],
+        report: SyncReport,
+    ) -> bool:
+        state_changed = False
+        removed_file_ids = sorted(set(state.documents) - active_file_ids)
+        for file_id in removed_file_ids:
+            previous = state.documents[file_id]
+            try:
+                deleted = self.delete_func(
+                    previous.doc_id,
+                    namespace=self.config.pinecone_namespace,
+                )
+                if not deleted:
+                    raise RuntimeError("private vector delete returned false")
+                del state.documents[file_id]
+                state_changed = True
+                report.deleted += 1
+                _sync_log.info("Private knowledge removed doc_id=%s", previous.doc_id)
+            except Exception as exc:
+                report.failed += 1
+                report.failed_doc_ids.append(previous.doc_id)
+                _sync_log.warning(
+                    "Private knowledge remove failed doc_id=%s error_type=%s",
+                    previous.doc_id,
+                    type(exc).__name__,
+                )
+        return state_changed
+
     def sync(self, dry_run: bool = False) -> SyncReport:
         allowlist = self.config.load_allowlist()
         records = self.drive.list_allowed(allowlist)
         state = self._load_state()
         report = SyncReport(scanned=len(records))
         state_changed = False
+
+        if not dry_run:
+            active_file_ids = {record.file_id for record in records}
+            state_changed = self._prune_removed_sources(state, active_file_ids, report)
 
         for record in records:
             remote_version = record.md5_checksum or record.modified_time or "unknown"
