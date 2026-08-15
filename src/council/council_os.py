@@ -1,13 +1,23 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from src.council.council_os_models import ExpertMemo, KnowledgeStatus, extract_json_object
-from src.council.expert_registry import ExpertDefinition
+from src.council.business_routing import early_consensus_vote
+from src.council.council_os_models import (
+    EvidenceAssessment,
+    ExpertMemo,
+    KnowledgeStatus,
+    ProblemProfile,
+    Rebuttal,
+    RedTeamReport,
+    extract_json_object,
+)
+from src.council.expert_registry import EXPERT_REGISTRY, ExpertDefinition
 from src.knowledge.private_models import KnowledgeRetrievalResult
 from src.knowledge.retriever import format_context_for_agent, query_knowledge_result
 from src.llm_providers import LLMProvider
@@ -34,6 +44,14 @@ def _safe_source_inventory(chunks: list[dict[str, Any]]) -> list[dict[str, Any]]
         }
         for chunk in chunks
     ]
+
+
+def _dump_models(items: list[Any]) -> str:
+    return json.dumps(
+        [item.model_dump(mode="json") for item in items],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
 
 
 class CouncilOS:
@@ -157,3 +175,182 @@ class CouncilOS:
             round_result.memos.append(outcome)
 
         return round_result
+
+    def _rebuttal_system_prompt(self, expert: ExpertDefinition) -> str:
+        return "\n".join(
+            [
+                "[STAGE:REBUTTAL]",
+                f"[EXPERT_ID:{expert.id}]",
+                expert.system_prompt,
+                "The blind round is complete. You may now inspect peer memos.",
+                "Focus on the strongest disagreement and the smallest assumption that could flip the decision.",
+                "Return one JSON object only with keys: expert_id, strongest_agreement, "
+                "strongest_disagreement, assumption_to_test, revised_vote, revised_confidence.",
+            ]
+        )
+
+    async def _generate_rebuttal(
+        self,
+        query: str,
+        profile: ProblemProfile,
+        expert: ExpertDefinition,
+        own_memo: ExpertMemo,
+        peer_memos: list[ExpertMemo],
+    ) -> Rebuttal:
+        user_prompt = "\n".join(
+            [
+                f"Decision question: {query}",
+                f"Problem profile: {profile.model_dump_json()}",
+                f"Your blind memo: {own_memo.model_dump_json()}",
+                f"Peer blind memos: {_dump_models(peer_memos)}",
+            ]
+        )
+        response = await self.llm.generate(
+            self._rebuttal_system_prompt(expert),
+            user_prompt,
+            temperature=0.3,
+            max_tokens=1000,
+        )
+        payload = extract_json_object(response.content)
+        payload["expert_id"] = expert.id
+        return Rebuttal.model_validate(payload)
+
+    async def _run_rebuttals(
+        self,
+        query: str,
+        profile: ProblemProfile,
+        experts: list[ExpertDefinition],
+        memos: list[ExpertMemo],
+    ) -> list[Rebuttal]:
+        memo_by_expert = {memo.expert_id: memo for memo in memos}
+        participating = [expert for expert in experts if expert.id in memo_by_expert]
+        tasks = []
+        for expert in participating:
+            own_memo = memo_by_expert[expert.id]
+            peers = [memo for memo in memos if memo.expert_id != expert.id]
+            tasks.append(self._generate_rebuttal(query, profile, expert, own_memo, peers))
+
+        generated = await asyncio.gather(*tasks, return_exceptions=True)
+        return [outcome for outcome in generated if isinstance(outcome, Rebuttal)]
+
+    async def _run_red_team(
+        self,
+        query: str,
+        profile: ProblemProfile,
+        memos: list[ExpertMemo],
+        rebuttals: list[Rebuttal],
+    ) -> RedTeamReport:
+        consensus_vote, consensus_share = early_consensus_vote(memos)
+        premature_consensus = consensus_vote is not None
+        consensus_line = f"PREMATURE_CONSENSUS={'true' if premature_consensus else 'false'}"
+        instructions = [
+            consensus_line,
+            f"EARLY_CONSENSUS_SHARE={consensus_share:.3f}",
+        ]
+        if premature_consensus:
+            instructions.append("REQUIRED: construct the strongest credible contrarian case")
+
+        user_prompt = "\n".join(
+            [
+                f"Decision question: {query}",
+                f"Problem profile: {profile.model_dump_json()}",
+                *instructions,
+                f"Blind memos: {_dump_models(memos)}",
+                f"Rebuttals: {_dump_models(rebuttals)}",
+            ]
+        )
+        system_prompt = "\n".join(
+            [
+                "[STAGE:RED_TEAM]",
+                "[EXPERT_ID:red_team]",
+                EXPERT_REGISTRY["red_team"].system_prompt,
+                "Return one JSON object with failure_modes, challenged_assumptions, "
+                "double_crux_questions, premature_consensus, contrarian_case, parse_error.",
+            ]
+        )
+        try:
+            response = await self.llm.generate(
+                system_prompt,
+                user_prompt,
+                temperature=0.45,
+                max_tokens=1400,
+            )
+            payload = extract_json_object(response.content)
+            payload["premature_consensus"] = premature_consensus
+            report = RedTeamReport.model_validate(payload)
+            if premature_consensus and not report.contrarian_case.strip():
+                return report.model_copy(
+                    update={
+                        "contrarian_case": "red_team_missing_required_contrarian_case",
+                        "parse_error": True,
+                    }
+                )
+            return report
+        except Exception:
+            return RedTeamReport(
+                failure_modes=["red_team_parse_error"],
+                challenged_assumptions=[],
+                double_crux_questions=[],
+                premature_consensus=premature_consensus,
+                contrarian_case="",
+                parse_error=True,
+            )
+
+    async def _run_evidence_judge(
+        self,
+        query: str,
+        profile: ProblemProfile,
+        blind: _BlindRound,
+        memos: list[ExpertMemo],
+        rebuttals: list[Rebuttal],
+        red_team: RedTeamReport,
+    ) -> EvidenceAssessment:
+        source_payload = {
+            expert_id: {
+                "knowledge_status": blind.knowledge_status_by_expert.get(expert_id, "disabled"),
+                "sources": sources,
+            }
+            for expert_id, sources in blind.source_inventory.items()
+        }
+        user_prompt = "\n".join(
+            [
+                f"Decision question: {query}",
+                f"Problem profile: {profile.model_dump_json()}",
+                f"Blind memos: {_dump_models(memos)}",
+                f"Rebuttals: {_dump_models(rebuttals)}",
+                f"Red Team: {red_team.model_dump_json()}",
+                "Source provenance and knowledge_status by expert: "
+                + json.dumps(source_payload, ensure_ascii=False, separators=(",", ":")),
+            ]
+        )
+        system_prompt = "\n".join(
+            [
+                "[STAGE:EVIDENCE_JUDGE]",
+                "[EXPERT_ID:evidence_judge]",
+                EXPERT_REGISTRY["evidence_judge"].system_prompt,
+                "Judge support only relative to supplied provenance. Do not choose the business verdict.",
+                "Return one JSON object with supported_claims, weak_or_unsupported_claims, "
+                "contradictions, evidence_gaps, knowledge_status_by_expert, "
+                "framework_fact_confusions, parse_error.",
+            ]
+        )
+        try:
+            response = await self.llm.generate(
+                system_prompt,
+                user_prompt,
+                temperature=0.2,
+                max_tokens=1400,
+            )
+            payload = extract_json_object(response.content)
+            payload["knowledge_status_by_expert"] = blind.knowledge_status_by_expert
+            return EvidenceAssessment.model_validate(payload)
+        except Exception:
+            return EvidenceAssessment(
+                supported_claims=[],
+                weak_or_unsupported_claims=[],
+                contradictions=[],
+                evidence_gaps=["evidence_judge_parse_error"],
+                knowledge_status_by_expert=blind.knowledge_status_by_expert,
+                framework_fact_confusions=[],
+                parse_error=True,
+            )
