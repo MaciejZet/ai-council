@@ -31,7 +31,7 @@ jobs:
         run: uv sync --extra dev --frozen
 
       - name: Private knowledge focused tests
-        run: uv run pytest tests/test_private_corpus_guard.py -v --tb=short --no-cov
+        run: uv run pytest tests/test_private_*.py -v --tb=short --no-cov
 
       - name: Public repository corpus guard
         run: uv run python scripts/check_private_corpus.py --tracked-only
