@@ -1,10 +1,8 @@
 import json
 
-import pytest
-
 from src.knowledge.drive_source import DriveSourceRecord
 from src.knowledge.private_config import PrivateKnowledgeConfig
-from src.knowledge.private_models import DriveAllowlist, DriveAllowlistEntry
+from src.knowledge.private_models import DriveAllowlistEntry
 from src.knowledge.private_sync import PrivateKnowledgeSync
 
 
