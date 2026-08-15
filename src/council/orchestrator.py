@@ -10,7 +10,7 @@ import asyncio
 import os
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
 from src.agents.base import AgentResponse, BaseAgent, agent_registry
 from src.agents.core_agents import Synthesizer, create_core_agents
@@ -61,15 +61,15 @@ class CouncilDeliberation:
     context_used: list[str]
     sources: list[dict[str, Any]]
     agent_responses: list[AgentResponse]
-    synthesis: Optional[AgentResponse]
+    synthesis: AgentResponse | None
     total_agents: int
     providers_used: list[str]
     usage: UsageStats = field(default_factory=UsageStats)
     behavior_preset: str = "default"
-    critic_notes: Optional[str] = None
-    agent_weights: Optional[list[dict[str, Any]]] = None
+    critic_notes: str | None = None
+    agent_weights: list[dict[str, Any]] | None = None
     knowledge_status: str = "disabled"
-    knowledge_error_code: Optional[str] = None
+    knowledge_error_code: str | None = None
 
 
 class Council:
@@ -84,7 +84,7 @@ class Council:
         self.use_knowledge_base = use_knowledge_base
         self.knowledge_top_k = knowledge_top_k
         self.knowledge_namespace = knowledge_namespace or os.getenv("PINECONE_PRIVATE_NAMESPACE") or None
-        self._synthesizer: Optional[Synthesizer] = None
+        self._synthesizer: Synthesizer | None = None
 
     def _get_agents(self, include_specialists: bool = True) -> list[BaseAgent]:
         """Pobiera listę aktywnych agentów bez Syntezatora."""
@@ -102,7 +102,7 @@ class Council:
         query: str,
         *,
         hybrid: bool = False,
-    ) -> tuple[list[str], list[dict[str, Any]], str, Optional[str]]:
+    ) -> tuple[list[str], list[dict[str, Any]], str, str | None]:
         """Pobiera kontekst i jawny status dostępności bazy wiedzy."""
         if not self.use_knowledge_base:
             return [], [], "disabled", None
@@ -127,9 +127,9 @@ class Council:
     async def deliberate(
         self,
         query: str,
-        agents: Optional[list[BaseAgent]] = None,
+        agents: list[BaseAgent] | None = None,
         include_synthesis: bool = True,
-        llm: Optional[LLMProvider] = None,
+        llm: LLMProvider | None = None,
         behavior_preset: str = "default",
         enable_critic: bool = False,
         enable_weighted_voting: bool = False,
@@ -211,8 +211,8 @@ class Council:
             usage.add(response.prompt_tokens, response.completion_tokens, response.model)
 
         synthesis = None
-        critic_notes: Optional[str] = None
-        weights_payload: Optional[list[dict[str, Any]]] = None
+        critic_notes: str | None = None
+        weights_payload: list[dict[str, Any]] | None = None
         model_for_extra = responses[0].model if responses else "gpt-4o"
 
         if include_synthesis and self._synthesizer:
@@ -228,7 +228,7 @@ class Council:
                     )
                     usage.add(prompt_tokens, completion_tokens, model_for_extra)
 
-                weights_list: Optional[list[float]] = None
+                weights_list: list[float] | None = None
                 if enable_weighted_voting:
                     weights_list, prompt_tokens, completion_tokens = await llm_agent_weights(
                         synth_llm,
@@ -346,7 +346,7 @@ def format_deliberation_markdown(deliberation: CouncilDeliberation) -> str:
     return "\n".join(parts)
 
 
-_council_instance: Optional[Council] = None
+_council_instance: Council | None = None
 
 
 def get_council(use_knowledge_base: bool = True) -> Council:
