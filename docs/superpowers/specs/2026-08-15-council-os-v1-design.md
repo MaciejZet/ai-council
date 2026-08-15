@@ -4,7 +4,7 @@
 
 Turn the existing AI Council repository into a decision-oriented business council that routes a bounded set of relevant experts, gives them independent first-pass analysis, forces adversarial review, judges evidence quality, and ends with a structured Chairman verdict.
 
-Council OS v1 must reuse the repository's existing LLM provider abstraction and Pinecone retrieval layer. It is not a second product or a replacement for the existing Council, debate, or specialty modes.
+Council OS v1 reuses the repository's existing LLM provider abstraction and Pinecone retrieval layer. It is not a second product or a replacement for the existing Council, debate, or specialty modes.
 
 ## Scope
 
@@ -64,7 +64,7 @@ Mandatory review roles:
 - `evidence_judge`
 - `chairman`
 
-The mandatory roles are never counted toward the 4–6 domain-expert routing cap.
+The mandatory roles are never counted toward the 4–5 domain-expert routing cap.
 
 ### 2. Business router
 
@@ -92,7 +92,7 @@ The call uses:
 - `PINECONE_PRIVATE_NAMESPACE` through the existing runtime configuration;
 - provenance-preserving context formatting.
 
-Private chunks may enter internal LLM prompts, because that is the purpose of the private RAG system. They must not be written to application logs or added to public source-display payloads.
+Private chunks may enter internal LLM prompts, because that is the purpose of the private RAG system. They must not be written to application logs or added as raw retrieval fields to public source-display or Council OS SSE payloads.
 
 Retrieval status is tracked per expert. `unavailable` is distinct from `no_matches`. A retrieval outage does not stop the council, but the Evidence Judge and Chairman are explicitly told that private evidence was unavailable.
 
@@ -100,9 +100,9 @@ Retrieval status is tracked per expert. `unavailable` is distinct from `no_match
 
 Round 1 is structurally blind. Every selected domain expert is called independently and in parallel. Its prompt contains:
 
-- original question;
-- problem profile;
+- the original question;
 - role instructions;
+- that expert's knowledge status;
 - only that expert's retrieved context and provenance;
 - a strict JSON memo schema.
 
@@ -222,15 +222,15 @@ No model is assumed to be genuinely independent when the same provider/model is 
 
 Council OS is exposed through the existing Council Mode surface under mode id `council_os`.
 
-A thin adapter in `src/council/modes.py`:
+The thin adapter in `src/council/modes.py`:
 
 - emits `mode_start`;
-- emits phase/agent progress events;
 - calls `CouncilOS`;
-- emits one structured `council_os_result` event containing route, memos summaries, Red Team report, Evidence Judge assessment, and Chairman verdict;
-- emits `complete`.
+- emits one structured `council_os_result` event containing route, memos, Red Team report, Evidence Judge assessment, and Chairman verdict;
+- emits `complete`;
+- respects the existing `use_knowledge_base` flag by injecting a local `disabled` retriever when knowledge use is turned off.
 
-Existing mode ids and API contracts stay valid. No second HTTP API is required for v1.
+Existing mode ids and API contracts stay valid. No second HTTP API is required for v1. Fine-grained phase progress events can be added later without changing the result schema.
 
 ## Error handling
 
@@ -239,7 +239,7 @@ Existing mode ids and API contracts stay valid. No second HTTP API is required f
 - Retrieval `unavailable` is preserved as status metadata and disclosed to Evidence Judge/Chairman.
 - JSON parsing never uses `eval`. It strips optional markdown fences, extracts the outer JSON object, validates with Pydantic, and uses typed fallbacks.
 - Red Team or Evidence Judge parse failure is represented explicitly in their typed fallback object and passed to Chairman as an evidence gap.
-- Raw private retrieved passages are never included in SSE result payloads.
+- Raw private retrieval objects and chunk fields are never included in the structured SSE result payload.
 
 ## Testing strategy
 
@@ -255,12 +255,13 @@ Required tests:
 6. Rebuttal prompts do contain peer memo summaries only after blind round completes.
 7. Red Team runs after all blind/rebuttal calls.
 8. >80% matching blind `vote` values marks/requests a contrarian challenge.
-9. Evidence Judge sees provenance/status but result payload does not leak raw private chunks.
+9. Evidence Judge sees provenance/status but result payload does not contain raw private retrieval chunks.
 10. Chairman is last and validates the strict verdict schema.
 11. Malformed Chairman JSON returns typed `DEFER`.
 12. Knowledge `unavailable` remains distinct from `no_matches` through the verdict pipeline.
 13. Existing `/api/council/mode/stream` recognizes `council_os` while unknown modes still return 404.
-14. Existing full repository tests, Ruff checks, private corpus guard, and quality gate remain green.
+14. `use_knowledge_base=False` produces `disabled` retrieval without calling the normal knowledge backend.
+15. Existing full repository tests, Ruff checks, private corpus guard, and quality gate remain green.
 
 ## Acceptance criteria
 
@@ -276,4 +277,4 @@ route
 -> chairman
 ```
 
-and the final typed result contains a valid `GO`, `NO-GO`, `TEST`, or `DEFER` verdict without exposing raw private retrieved text in the external result payload.
+and the final typed result contains a valid `GO`, `NO-GO`, `TEST`, or `DEFER` verdict without exposing raw private retrieval objects or chunk fields in the external result payload.
