@@ -76,3 +76,35 @@ async def test_custom_provider_is_capped_to_ten_valid_sources_at_council_boundar
 
     assert len(normalized.sources) == 10
     assert [source.evidence_id for source in normalized.sources] == [f"web_{index}" for index in range(10)]
+
+@pytest.mark.asyncio
+async def test_custom_provider_duplicate_evidence_ids_are_deduplicated_at_council_boundary():
+    sources = [
+        LiveEvidenceSource(
+            evidence_id="web_dup",
+            query_index=0,
+            title=f"Source {index}",
+            canonical_url=f"https://example.com/{index}",
+            domain="example.com",
+            snippet=f"snippet {index}",
+            relevance_score=0.5,
+            fetched_at="2026-08-16T12:00:00+00:00",
+        )
+        for index in range(2)
+    ]
+    council = CouncilOS(
+        StageLLM(),
+        retriever=_no_matches,
+        live_evidence_provider=FakeLiveProvider(
+            LiveEvidenceContext(status="ok", query_count=1, sources=sources)
+        ),
+    )
+
+    normalized = await council._collect_live_evidence(
+        "Should we enter Germany?",
+        ProblemProfile(primary_domain="strategy"),
+    )
+
+    assert len(normalized.sources) == 1
+    assert normalized.sources[0].evidence_id == "web_dup"
+    assert normalized.sources[0].canonical_url == "https://example.com/0"

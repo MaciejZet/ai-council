@@ -159,11 +159,19 @@ class CouncilOS(_CoreCouncilOS):
             raw_context = await self.live_evidence_provider.collect(query, profile, framework_ids)
             context = LiveEvidenceContext.model_validate(raw_context)
             normalized_sources: list[LiveEvidenceSource] = []
-            for source in context.sources[:10]:
+            seen_evidence_ids: set[str] = set()
+            seen_urls: set[str] = set()
+            for source in context.sources:
+                if len(normalized_sources) >= 10:
+                    break
                 try:
                     canonical_url, domain = canonicalize_live_url(source.canonical_url)
                 except (TypeError, ValueError):
                     continue
+                if source.evidence_id in seen_evidence_ids or canonical_url in seen_urls:
+                    continue
+                seen_evidence_ids.add(source.evidence_id)
+                seen_urls.add(canonical_url)
                 normalized_sources.append(
                     LiveEvidenceSource(
                         evidence_id=source.evidence_id,
