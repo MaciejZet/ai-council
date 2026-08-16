@@ -92,8 +92,9 @@ Uruchamia wbudowany `uvicorn` na porcie **8000** (zgodnie z powyższym).
 The sequence is fixed:
 
 ```text
-problem profile and routing
-→ per-expert private RAG
+problem profile and expert routing
+→ deterministic Framework Selector
+→ per-expert framework-aware private RAG
 → blind independent memos
 → user-scoped Decision Memory learning (authenticated runs only)
 → peer rebuttals
@@ -103,9 +104,11 @@ problem profile and routing
 → GO / NO-GO / TEST / DEFER
 ```
 
-Each domain expert gets its own knowledge filters and completes the first memo before seeing peer opinions or historical Decision Memory signals. Claims can be labeled as supplied-evidence facts (`F`), assumptions (`A`), inferences (`I`), framework-derived claims (`FMW`), or judgment (`O`). If more than 80% of successful blind votes point in the same direction, Red Team is explicitly required to construct a credible contrarian case.
+Framework Selector chooses a sparse set of analytical lenses from a versioned registry before retrieval and the blind round. Selection is deterministic, requires a score of at least `5`, is capped at `3` frameworks per decision and `2` per expert, and never reads Decision Memory history or private RAG chunks. Framework-aware retrieval first uses the selected `framework_tags`; a `no_matches` result falls back once to the existing expert/domain retrieval, while `unavailable` is preserved without a retry.
 
-The Chairman runs last and returns a typed verdict with confidence, consensus, the main disagreement, minority report, assumptions, evidence gaps, conditions that would change the decision, and an optional experiment with a metric, threshold, timeline, and kill criteria.
+Each domain expert gets its own knowledge filters and completes the first memo before seeing peer opinions or historical Decision Memory signals. Frameworks organize analysis; they do not establish facts. Material framework-derived claims use `FMW`, while `F` is reserved for claims supported independently by supplied evidence. Red Team checks framework applicability and correlated reasoning, Evidence Judge can reject a framework or flag a misclassified fact claim, and Chairman receives only the framework set left active after that review.
+
+If more than 80% of successful blind votes point in the same direction, Red Team is explicitly required to construct a credible contrarian case. The Chairman runs last and returns a typed verdict with confidence, consensus, the main disagreement, minority report, assumptions, evidence gaps, conditions that would change the decision, and an optional experiment with a metric, threshold, timeline, and kill criteria.
 
 When every role uses the same provider and model, Council OS still makes separate blind calls with isolated prompts. That reduces prompt-level groupthink, but it does not create independent models. Different providers can be wired in later without changing the decision contract.
 
@@ -113,7 +116,7 @@ When every role uses the same provider and model, Council OS still makes separat
 
 Authenticated `council_os` streams can persist a sanitized decision record. Send the existing `X-User-Session` header and a successful capture adds `decision_id` to the `council_os_result` SSE event. Anonymous and invalid-session runs still work, but they are not stored and do not receive historical learning context.
 
-Decision Memory records the business question, problem profile, routed role ids, blind and revised votes, confidence, knowledge status, Chairman verdict, assumptions, evidence-gap labels, and the next experiment. It does not store raw RAG passages, source inventories, Drive IDs, full expert memo prose, or full rebuttal prose.
+Decision Memory records the business question, problem profile, routed role ids, blind and revised votes, confidence, knowledge status, Chairman verdict, assumptions, evidence-gap labels, the next experiment, controlled learning diagnostics, and the sanitized Framework Selector summary. It does not store raw RAG passages, source inventories, Drive IDs, full expert memo prose, full rebuttal prose, or book text in framework diagnostics.
 
 Outcomes are user-authored and can be revised as evidence matures. A record can hold an operational status (`success`, `failure`, `mixed`, or `inconclusive`), an optional hindsight `resolved_vote`, experiment result, postmortem, and notes.
 
@@ -126,7 +129,7 @@ For authenticated runs, resolved history can inform later deliberations only aft
 - **Automatic categorization** - Marketing, strategy, business, productivity
 - **Local document import** - PDF/txt/md ingestion for authorized sources
 - **Private Drive sync** - Allowlist-only Google Drive → private Pinecone namespace
-- **Pinecone vector database** - Semantic search with source/domain/expert metadata
+- **Pinecone vector database** - Semantic search with source/domain/expert/framework metadata
 
 Private books, summaries, notes, Drive exports, chunks and embeddings are not stored in this public repository. See [docs/PRIVATE_KNOWLEDGE.md](docs/PRIVATE_KNOWLEDGE.md).
 
@@ -190,6 +193,7 @@ All Decision Memory REST endpoints require `X-User-Session`.
 
 ## Documentation
 
+- **[docs/FRAMEWORK_SELECTOR_V1.md](docs/FRAMEWORK_SELECTOR_V1.md)** - Deterministic framework selection, framework-aware RAG, FMW discipline, review gates, and privacy boundary
 - **[docs/DECISION_MEMORY_V2.md](docs/DECISION_MEMORY_V2.md)** - Controlled historical learning, privacy gates, sample thresholds, and failure behavior
 - **[docs/PRIVATE_KNOWLEDGE.md](docs/PRIVATE_KNOWLEDGE.md)** - Private Google Drive → Pinecone workflow and public-repo boundary
 - **[QUICK_START.md](QUICK_START.md)** - 🚀 Start w 3 krokach (ZACZNIJ TU!)
@@ -329,6 +333,7 @@ tail -f logs/ai_council_main_20260403.log
 - ✅ Private corpus paths and ebook formats blocked by repository guard
 - ✅ Retrieved private text omitted from normal source-display payloads and logs
 - ✅ Decision Memory excludes raw RAG passages, source inventories, and full expert/rebuttal prose
+- ✅ Framework diagnostics contain ids and bounded metadata, not private source text or historical notes
 
 ## Contributing
 

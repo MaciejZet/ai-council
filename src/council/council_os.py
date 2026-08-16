@@ -14,6 +14,10 @@ from src.council.council_os_models import (
     CouncilVerdict,
     EvidenceAssessment,
     ExpertMemo,
+    FrameworkAssessment,
+    FrameworkFactMisclassification,
+    FrameworkSelection,
+    FrameworkSelectionSummary,
     HistoricalAnalogyRejection,
     HistoricalContextAssessment,
     KnowledgeStatus,
@@ -26,11 +30,14 @@ from src.council.council_os_models import (
     extract_json_object,
 )
 from src.council.expert_registry import EXPERT_REGISTRY, ExpertDefinition
+from src.council.framework_registry import FRAMEWORK_POLICY_VERSION, FRAMEWORK_REGISTRY
+from src.council.framework_selector import select_frameworks
 from src.knowledge.private_models import KnowledgeRetrievalResult
 from src.knowledge.retriever import format_context_for_agent, query_knowledge_result
 from src.llm_providers import LLMProvider
 
 Retriever = Callable[..., KnowledgeRetrievalResult]
+FrameworkSelector = Callable[[str, ProblemProfile, list[str]], FrameworkSelection]
 LearningContextProvider = Callable[[ProblemProfile, list[str], list[ExpertMemo]], LearningContext]
 
 _CURRENT_LEARNING_CONTEXT_PROVIDER: ContextVar[LearningContextProvider | None] = ContextVar(
@@ -58,6 +65,7 @@ class _BlindRound:
     memos: list[ExpertMemo] = field(default_factory=list)
     knowledge_status_by_expert: dict[str, KnowledgeStatus] = field(default_factory=dict)
     source_inventory: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
+    framework_retrieval_status_by_expert: dict[str, str] = field(default_factory=dict)
     errors: list[str] = field(default_factory=list)
 
 
@@ -95,6 +103,7 @@ class CouncilOS:
         knowledge_namespace: str | None = None,
         knowledge_top_k: int = 5,
         learning_context_provider: LearningContextProvider | None = None,
+        framework_selector: FrameworkSelector | None = select_frameworks,
     ):
         self.llm = llm
         self.retriever = retriever
@@ -104,6 +113,7 @@ class CouncilOS:
             else os.getenv("PINECONE_PRIVATE_NAMESPACE") or None
         )
         self.knowledge_top_k = max(1, knowledge_top_k)
+        self.framework_selector = framework_selector
         self.learning_context_provider = (
             learning_context_provider
             if learning_context_provider is not None
@@ -114,14 +124,56 @@ class CouncilOS:
         self,
         query: str,
         expert: ExpertDefinition,
+        framework_tags: list[str] | None = None,
     ) -> KnowledgeRetrievalResult:
-        return self.retriever(
-            query,
-            top_k=self.knowledge_top_k,
-            domains=list(expert.domains),
-            experts=list(expert.retrieval_experts),
-            namespace=self.knowledge_namespace,
-        )
+        kwargs: dict[str, Any] = {
+            "top_k": self.knowledge_top_k,
+            "domains": list(expert.domains),
+            "experts": list(expert.retrieval_experts),
+            "namespace": self.knowledge_namespace,
+        }
+        if framework_tags:
+            kwargs["framework_tags"] = framework_tags
+        return self.retriever(query, **kwargs)
+
+    @staticmethod
+    def _framework_ids_for_expert(
+        selection: FrameworkSelection,
+        expert_id: str,
+    ) -> list[str]:
+        return list(selection.by_expert.get(expert_id, []))
+
+    @staticmethod
+    def _framework_tags(framework_ids: list[str]) -> list[str]:
+        tags: list[str] = []
+        for framework_id in framework_ids:
+            framework = FRAMEWORK_REGISTRY.get(framework_id)
+            if framework is None:
+                continue
+            for tag in framework.framework_tags:
+                if tag not in tags:
+                    tags.append(tag)
+        return tags
+
+    @staticmethod
+    def _framework_cards(framework_ids: list[str]) -> str:
+        cards: list[str] = []
+        for framework_id in framework_ids:
+            framework = FRAMEWORK_REGISTRY.get(framework_id)
+            if framework is None:
+                continue
+            questions = "\n".join(f"- {question}" for question in framework.diagnostic_questions)
+            cards.append(
+                "\n".join(
+                    [
+                        f"[FRAMEWORK:{framework.id}]",
+                        framework.description,
+                        "Diagnostic questions:",
+                        questions,
+                    ]
+                )
+            )
+        return "\n\n".join(cards) if cards else "No framework lens selected for this expert."
 
     def _blind_system_prompt(self, expert: ExpertDefinition) -> str:
         return "\n".join(
@@ -149,13 +201,22 @@ class CouncilOS:
         query: str,
         expert: ExpertDefinition,
         retrieval: KnowledgeRetrievalResult,
+        framework_ids: list[str] | None = None,
     ) -> str:
         context = format_context_for_agent(retrieval.chunks, include_provenance=True)
+        framework_ids = framework_ids or []
+        framework_cards = self._framework_cards(framework_ids)
         return "\n".join(
             [
                 f"Decision question: {query}",
                 f"Your role: {expert.role}",
                 f"Knowledge status: {retrieval.status}",
+                "Selected framework lenses:",
+                framework_cards,
+                "Selected frameworks are analysis lenses. They do not establish facts about this case.",
+                "Use [FMW] for material claims that come mainly from a framework.",
+                "Use [F] only when supplied evidence independently supports the factual claim.",
+                "You may reject a framework that does not fit the current case.",
                 "Use the supplied knowledge only when relevant; do not treat frameworks as current facts.",
                 "Private knowledge context and provenance:",
                 context,
@@ -167,10 +228,11 @@ class CouncilOS:
         query: str,
         expert: ExpertDefinition,
         retrieval: KnowledgeRetrievalResult,
+        framework_ids: list[str] | None = None,
     ) -> ExpertMemo:
         response = await self.llm.generate(
             self._blind_system_prompt(expert),
-            self._blind_user_prompt(query, expert, retrieval),
+            self._blind_user_prompt(query, expert, retrieval, framework_ids),
             temperature=0.35,
             max_tokens=1800,
         )
@@ -183,25 +245,56 @@ class CouncilOS:
         self,
         query: str,
         experts: list[ExpertDefinition],
+        framework_selection: FrameworkSelection | None = None,
     ) -> _BlindRound:
         round_result = _BlindRound()
         retrieval_by_expert: dict[str, KnowledgeRetrievalResult] = {}
+        framework_ids_by_expert: dict[str, list[str]] = {}
+        selection = framework_selection or FrameworkSelection(
+            policy_version=FRAMEWORK_POLICY_VERSION,
+            by_expert={expert.id: [] for expert in experts},
+        )
 
         for expert in experts:
+            framework_ids = self._framework_ids_for_expert(selection, expert.id)
+            framework_ids_by_expert[expert.id] = framework_ids
+            framework_tags = self._framework_tags(framework_ids)
             try:
-                retrieval = self._retrieve_for_expert(query, expert)
+                if framework_tags:
+                    retrieval = self._retrieve_for_expert(query, expert, framework_tags)
+                    if retrieval.status == "ok":
+                        retrieval_status = "framework_match"
+                    elif retrieval.status == "no_matches":
+                        retrieval = self._retrieve_for_expert(query, expert)
+                        retrieval_status = (
+                            "framework_no_match_fallback_ok"
+                            if retrieval.status == "ok"
+                            else "framework_no_match_fallback_no_matches"
+                        )
+                    else:
+                        retrieval_status = "framework_unavailable"
+                else:
+                    retrieval = self._retrieve_for_expert(query, expert)
+                    retrieval_status = "base_retrieval"
             except Exception as exc:
                 retrieval = KnowledgeRetrievalResult(
                     status="unavailable",
                     error_code="retriever_exception",
                 )
+                retrieval_status = "framework_unavailable" if framework_tags else "base_retrieval"
                 round_result.errors.append(f"retrieval:{expert.id}:{type(exc).__name__}")
             retrieval_by_expert[expert.id] = retrieval
+            round_result.framework_retrieval_status_by_expert[expert.id] = retrieval_status
             round_result.knowledge_status_by_expert[expert.id] = retrieval.status
             round_result.source_inventory[expert.id] = _safe_source_inventory(retrieval.chunks)
 
         tasks = [
-            self._generate_blind_memo(query, expert, retrieval_by_expert[expert.id])
+            self._generate_blind_memo(
+                query,
+                expert,
+                retrieval_by_expert[expert.id],
+                framework_ids_by_expert[expert.id],
+            )
             for expert in experts
         ]
         generated = await asyncio.gather(*tasks, return_exceptions=True)
@@ -323,6 +416,70 @@ class CouncilOS:
         generated = await asyncio.gather(*tasks, return_exceptions=True)
         return [outcome for outcome in generated if isinstance(outcome, Rebuttal)]
 
+    @staticmethod
+    def _framework_review_payload(selection: FrameworkSelection | None) -> dict[str, Any]:
+        if selection is None:
+            return {"policy_version": FRAMEWORK_POLICY_VERSION, "frameworks": [], "by_expert": {}}
+        return {
+            "policy_version": selection.policy_version,
+            "frameworks": [
+                {
+                    "framework_id": match.framework_id,
+                    "score": match.score,
+                    "reason_labels": match.reason_labels,
+                    "assigned_expert_ids": match.assigned_expert_ids,
+                }
+                for match in selection.matches
+            ],
+            "by_expert": selection.by_expert,
+        }
+
+    @staticmethod
+    def _claim_ref_map(memos: list[ExpertMemo]) -> dict[str, dict[str, str]]:
+        return {
+            f"{memo.expert_id}:{index}": {"label": claim.label.value}
+            for memo in memos
+            for index, claim in enumerate(memo.claims)
+        }
+
+    @staticmethod
+    def _sanitize_framework_assessment(
+        raw: FrameworkAssessment,
+        selection: FrameworkSelection | None,
+        memos: list[ExpertMemo],
+    ) -> FrameworkAssessment:
+        known_framework_ids = {match.framework_id for match in selection.matches} if selection else set()
+        known_claim_refs = {
+            f"{memo.expert_id}:{index}"
+            for memo in memos
+            for index, _claim in enumerate(memo.claims)
+        }
+        misclassified: list[FrameworkFactMisclassification] = []
+        for item in raw.misclassified_fact_claims:
+            if item.claim_ref not in known_claim_refs:
+                continue
+            if item.framework_id is not None and item.framework_id not in known_framework_ids:
+                continue
+            misclassified.append(
+                FrameworkFactMisclassification(
+                    claim_ref=item.claim_ref,
+                    framework_id=item.framework_id,
+                    reason=item.reason[:160],
+                )
+            )
+        rejected = [
+            framework_id
+            for framework_id in raw.rejected_framework_ids
+            if framework_id in known_framework_ids
+        ]
+        return FrameworkAssessment(
+            misclassified_fact_claims=misclassified,
+            framework_overreach_labels=[
+                label[:160] for label in dict.fromkeys(raw.framework_overreach_labels)
+            ],
+            rejected_framework_ids=list(dict.fromkeys(rejected)),
+        )
+
     async def _run_red_team(
         self,
         query: str,
@@ -330,6 +487,7 @@ class CouncilOS:
         memos: list[ExpertMemo],
         rebuttals: list[Rebuttal],
         learning: LearningContext | None = None,
+        framework_selection: FrameworkSelection | None = None,
     ) -> RedTeamReport:
         learning = learning or LearningContext(status="disabled")
         consensus_vote, consensus_share = early_consensus_vote(memos)
@@ -356,6 +514,8 @@ class CouncilOS:
                 f"Rebuttals: {_dump_models(rebuttals)}",
                 "Sanitized historical learning context: "
                 + _dump_learning(self._red_team_learning_payload(learning)),
+                "Sanitized framework selection: "
+                + _dump_learning(self._framework_review_payload(framework_selection)),
             ]
         )
         system_prompt = "\n".join(
@@ -364,6 +524,9 @@ class CouncilOS:
                 "[EXPERT_ID:red_team]",
                 EXPERT_REGISTRY["red_team"].system_prompt,
                 "Historical similarity is not evidence that the same outcome will recur.",
+                "Challenge whether each selected framework is actually applicable to the current case.",
+                "Look for correlated reasoning caused by multiple experts sharing the same framework lens.",
+                "Reject any use of a framework as empirical evidence about the current case.",
                 "Return one JSON object with failure_modes, challenged_assumptions, "
                 "double_crux_questions, premature_consensus, contrarian_case, parse_error.",
             ]
@@ -438,6 +601,7 @@ class CouncilOS:
         rebuttals: list[Rebuttal],
         red_team: RedTeamReport,
         learning: LearningContext | None = None,
+        framework_selection: FrameworkSelection | None = None,
     ) -> EvidenceAssessment:
         learning = learning or LearningContext(status="disabled")
         source_payload = {
@@ -457,6 +621,10 @@ class CouncilOS:
                 "Source provenance and knowledge_status by expert: "
                 + json.dumps(source_payload, ensure_ascii=False, separators=(",", ":")),
                 "Sanitized historical learning context: " + learning.model_dump_json(),
+                "Selected framework metadata: "
+                + _dump_learning(self._framework_review_payload(framework_selection)),
+                "Stable claim references: "
+                + json.dumps(self._claim_ref_map(memos), ensure_ascii=False, separators=(",", ":")),
             ]
         )
         system_prompt = "\n".join(
@@ -468,10 +636,15 @@ class CouncilOS:
                 "Current evidence has priority over historical precedent. Reject analogies that are weak, "
                 "structurally mismatched, or contradicted by current evidence.",
                 "Return one JSON object with supported_claims, weak_or_unsupported_claims, contradictions, "
-                "evidence_gaps, knowledge_status_by_expert, framework_fact_confusions, historical_context, parse_error.",
+                "evidence_gaps, knowledge_status_by_expert, framework_fact_confusions, historical_context, "
+                "framework_assessment, parse_error.",
                 "historical_context keys: accepted_analogy_ids, rejected_analogies "
                 "([{decision_id,reason}]), usable_calibration_expert_ids, "
                 "too_weak_calibration_expert_ids, current_evidence_conflicts.",
+                "framework_assessment keys: misclassified_fact_claims "
+                "([{claim_ref,framework_id,reason}]), framework_overreach_labels, rejected_framework_ids.",
+                "Use stable claim refs exactly as provided. Treat framework-derived reasoning as [FMW], not [F], "
+                "unless supplied evidence independently supports the fact.",
             ]
         )
         try:
@@ -489,6 +662,11 @@ class CouncilOS:
                     assessment.historical_context,
                     learning,
                 )
+            assessment.framework_assessment = self._sanitize_framework_assessment(
+                assessment.framework_assessment,
+                framework_selection,
+                memos,
+            )
             return assessment
         except Exception:
             return EvidenceAssessment(
@@ -535,6 +713,31 @@ class CouncilOS:
             "protected_minority_expert_ids": approved_protected_minority,
         }
 
+    @staticmethod
+    def _approved_framework_payload(
+        selection: FrameworkSelection | None,
+        evidence: EvidenceAssessment,
+    ) -> dict[str, Any]:
+        rejected = set(evidence.framework_assessment.rejected_framework_ids)
+        active = []
+        if selection is not None:
+            active = [
+                {
+                    "framework_id": match.framework_id,
+                    "score": match.score,
+                    "reason_labels": match.reason_labels,
+                    "assigned_expert_ids": match.assigned_expert_ids,
+                }
+                for match in selection.matches
+                if match.framework_id not in rejected
+            ]
+        return {
+            "policy_version": selection.policy_version if selection is not None else FRAMEWORK_POLICY_VERSION,
+            "active_frameworks": active,
+            "rejected_framework_ids": list(evidence.framework_assessment.rejected_framework_ids),
+            "framework_overreach_labels": list(evidence.framework_assessment.framework_overreach_labels),
+        }
+
     async def _run_chairman(
         self,
         query: str,
@@ -546,9 +749,11 @@ class CouncilOS:
         evidence: EvidenceAssessment,
         errors: list[str],
         learning: LearningContext | None = None,
+        framework_selection: FrameworkSelection | None = None,
     ) -> CouncilVerdict:
         learning = learning or LearningContext(status="disabled")
         approved_learning = self._approved_learning_payload(learning, evidence)
+        approved_frameworks = self._approved_framework_payload(framework_selection, evidence)
         approved_protected_minority = approved_learning["protected_minority_expert_ids"]
         protected_instruction = (
             "Protected minority: explicitly address the dissent from "
@@ -565,6 +770,8 @@ class CouncilOS:
                 "You are called only after domain experts, rebuttals, Red Team and Evidence Judge.",
                 "Historical analogies are precedents, not facts about the current case.",
                 "Current evidence overrides historical learning signals.",
+                "Frameworks are analytical lenses, not evidence. A rejected framework must not support the final recommendation.",
+                "Agreement produced by a shared framework is not independent confirmation, and a framework cannot independently raise confidence.",
                 "Sample strength none has no decision authority. Weak history may justify scrutiny or TEST "
                 "but cannot decide the verdict. Normal history may affect confidence or tie-breaking only "
                 "when current evidence is otherwise comparable.",
@@ -593,6 +800,8 @@ class CouncilOS:
                 + _dump_learning(evidence_without_history),
                 "Evidence-Judge-approved historical context: "
                 + _dump_learning(approved_learning),
+                "Evidence-Judge-approved framework context: "
+                + _dump_learning(approved_frameworks),
                 "Orchestration errors: " + json.dumps(errors),
                 "Do not imply unavailable private knowledge was consulted or verified.",
             ]
@@ -653,11 +862,55 @@ class CouncilOS:
             influenced_final_stage=influenced,
         )
 
+    @staticmethod
+    def _framework_summary(
+        selection: FrameworkSelection,
+        blind: _BlindRound,
+        evidence: EvidenceAssessment | None,
+        selector_error_labels: list[str],
+    ) -> FrameworkSelectionSummary:
+        rejected = (
+            evidence.framework_assessment.rejected_framework_ids
+            if evidence is not None
+            else []
+        )
+        return FrameworkSelectionSummary(
+            policy_version=selection.policy_version,
+            selected_framework_ids=[match.framework_id for match in selection.matches],
+            by_expert=selection.by_expert,
+            reason_labels_by_framework={
+                match.framework_id: match.reason_labels for match in selection.matches
+            },
+            retrieval_status_by_expert=blind.framework_retrieval_status_by_expert,
+            rejected_framework_ids=list(rejected),
+            selector_error_labels=list(selector_error_labels),
+        )
+
     async def deliberate(self, query: str) -> CouncilOSResult:
         profile = profile_problem(query)
         experts = route_experts(profile)
-        blind = await self._run_blind_memos(query, experts)
-        errors = list(blind.errors)
+        framework_errors: list[str] = []
+        if self.framework_selector is None:
+            framework_selection = FrameworkSelection(
+                policy_version=FRAMEWORK_POLICY_VERSION,
+                by_expert={expert.id: [] for expert in experts},
+            )
+        else:
+            try:
+                framework_selection = self.framework_selector(
+                    query,
+                    profile,
+                    [expert.id for expert in experts],
+                )
+                framework_selection = FrameworkSelection.model_validate(framework_selection)
+            except Exception:
+                framework_selection = FrameworkSelection(
+                    policy_version=FRAMEWORK_POLICY_VERSION,
+                    by_expert={expert.id: [] for expert in experts},
+                )
+                framework_errors.append("framework_selector_unavailable")
+        blind = await self._run_blind_memos(query, experts, framework_selection)
+        errors = framework_errors + list(blind.errors)
 
         if len(blind.memos) < 2:
             return CouncilOSResult(
@@ -671,6 +924,9 @@ class CouncilOS:
                 knowledge_status_by_expert=blind.knowledge_status_by_expert,
                 errors=errors,
                 learning_context_summary=LearningContextSummary(status="disabled"),
+                framework_selection_summary=self._framework_summary(
+                    framework_selection, blind, None, framework_errors
+                ),
             )
 
         learning, learning_error = self._build_learning_context(profile, experts, blind.memos)
@@ -697,6 +953,7 @@ class CouncilOS:
             blind.memos,
             rebuttals,
             learning,
+            framework_selection,
         )
         if red_team.parse_error:
             errors.append("red_team_parse_error")
@@ -709,6 +966,7 @@ class CouncilOS:
             rebuttals,
             red_team,
             learning,
+            framework_selection,
         )
         if evidence.parse_error:
             errors.append("evidence_judge_parse_error")
@@ -723,6 +981,7 @@ class CouncilOS:
             evidence,
             errors,
             learning,
+            framework_selection,
         )
         if "chairman_parse_error" in verdict.evidence_gaps:
             errors.append("chairman_parse_error")
@@ -738,4 +997,7 @@ class CouncilOS:
             knowledge_status_by_expert=blind.knowledge_status_by_expert,
             errors=errors,
             learning_context_summary=self._learning_summary(learning, evidence),
+            framework_selection_summary=self._framework_summary(
+                framework_selection, blind, evidence, framework_errors
+            ),
         )

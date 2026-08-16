@@ -101,7 +101,8 @@ class DecisionMemoryStore:
                     next_experiment_json TEXT,
                     knowledge_status_json TEXT NOT NULL,
                     orchestration_errors_json TEXT NOT NULL,
-                    learning_context_json TEXT
+                    learning_context_json TEXT,
+                    framework_selection_json TEXT
                 );
 
                 CREATE TABLE IF NOT EXISTS decision_expert_votes (
@@ -141,6 +142,8 @@ class DecisionMemoryStore:
             columns = {row["name"] for row in conn.execute("PRAGMA table_info(decisions)").fetchall()}
             if "learning_context_json" not in columns:
                 conn.execute("ALTER TABLE decisions ADD COLUMN learning_context_json TEXT")
+            if "framework_selection_json" not in columns:
+                conn.execute("ALTER TABLE decisions ADD COLUMN framework_selection_json TEXT")
 
     def capture_decision(self, user_id: str, query: str, result: CouncilOSResult) -> str:
         decision_id = str(uuid.uuid4())
@@ -153,6 +156,11 @@ class DecisionMemoryStore:
         learning_summary = (
             result.learning_context_summary.model_dump(mode="json")
             if result.learning_context_summary is not None
+            else None
+        )
+        framework_summary = (
+            result.framework_selection_summary.model_dump(mode="json")
+            if result.framework_selection_summary is not None
             else None
         )
         rebuttals = {rebuttal.expert_id: rebuttal for rebuttal in result.rebuttals}
@@ -182,6 +190,7 @@ class DecisionMemoryStore:
             _json_dump(result.knowledge_status_by_expert),
             _json_dump(result.errors),
             _json_dump(learning_summary) if learning_summary is not None else None,
+            _json_dump(framework_summary) if framework_summary is not None else None,
         )
 
         with self._lock, self._connect() as conn:
@@ -195,11 +204,11 @@ class DecisionMemoryStore:
                     key_disagreement, minority_report, assumptions_json,
                     evidence_gaps_json, what_would_change_decision_json,
                     next_experiment_json, knowledge_status_json,
-                    orchestration_errors_json, learning_context_json
+                    orchestration_errors_json, learning_context_json, framework_selection_json
                 ) VALUES (
                     ?, ?, ?, ?, ?,
                     ?, ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                 )
                 """,
                 decision_values,
@@ -254,6 +263,7 @@ class DecisionMemoryStore:
             "knowledge_status_by_expert": _json_load(row["knowledge_status_json"]),
             "orchestration_errors": _json_load(row["orchestration_errors_json"]),
             "learning_context_summary": _json_load(row["learning_context_json"]) if row["learning_context_json"] is not None else None,
+            "framework_selection_summary": _json_load(row["framework_selection_json"]) if row["framework_selection_json"] is not None else None,
         }
 
     @staticmethod

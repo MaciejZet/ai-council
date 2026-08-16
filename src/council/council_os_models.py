@@ -5,7 +5,9 @@ import re
 from enum import StrEnum
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from src.council.framework_registry import FRAMEWORK_POLICY_VERSION, FRAMEWORK_REGISTRY
 
 KnowledgeStatus = Literal["ok", "no_matches", "disabled", "unavailable"]
 Reversibility = Literal["reversible", "hard_to_reverse"]
@@ -134,6 +136,178 @@ class LearningContextSummary(BaseModel):
     influenced_final_stage: bool = False
 
 
+_FRAMEWORK_REASON_LABELS = {
+    "primary_domain",
+    "secondary_domain",
+    "decision_kind",
+    "routed_expert",
+    "trigger_keyword",
+    "reversibility_bonus",
+    "high_risk_bonus",
+}
+_FRAMEWORK_MISCLASSIFICATION_REASONS = {
+    "framework_rule_presented_as_fact",
+    "framework_without_independent_evidence",
+    "framework_claim_mislabeled",
+}
+_FRAMEWORK_OVERREACH_LABELS = {
+    "correlated_framework_reasoning",
+    "framework_inapplicable",
+    "framework_as_evidence",
+    "framework_overreach",
+}
+_FRAMEWORK_RETRIEVAL_STATUSES = {
+    "framework_match",
+    "framework_no_match_fallback_ok",
+    "framework_no_match_fallback_no_matches",
+    "framework_unavailable",
+    "framework_disabled",
+    "base_retrieval",
+}
+
+
+class FrameworkMatch(BaseModel):
+    framework_id: str
+    score: int
+    reason_labels: list[str] = Field(default_factory=list)
+    assigned_expert_ids: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def sanitize_public_metadata(self) -> "FrameworkMatch":
+        framework = FRAMEWORK_REGISTRY.get(self.framework_id)
+        self.reason_labels = [
+            label for label in dict.fromkeys(self.reason_labels) if label in _FRAMEWORK_REASON_LABELS
+        ]
+        if framework is None:
+            self.assigned_expert_ids = []
+        else:
+            self.assigned_expert_ids = [
+                expert_id
+                for expert_id in dict.fromkeys(self.assigned_expert_ids)
+                if expert_id in framework.expert_ids
+            ]
+        return self
+
+
+class FrameworkSelection(BaseModel):
+    model_config = ConfigDict(revalidate_instances="always")
+
+    policy_version: str
+    matches: list[FrameworkMatch] = Field(default_factory=list)
+    by_expert: dict[str, list[str]] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def enforce_registry_contract(self) -> "FrameworkSelection":
+        counts: dict[str, int] = {}
+        by_expert: dict[str, list[str]] = {
+            expert_id: []
+            for expert_id, framework_ids in self.by_expert.items()
+            if not framework_ids
+        }
+        matches: list[FrameworkMatch] = []
+        seen_frameworks: set[str] = set()
+        for match in self.matches:
+            if len(matches) >= 3 or match.framework_id in seen_frameworks:
+                continue
+            framework = FRAMEWORK_REGISTRY.get(match.framework_id)
+            if framework is None:
+                continue
+            assigned: list[str] = []
+            for expert_id in match.assigned_expert_ids:
+                if expert_id not in framework.expert_ids or counts.get(expert_id, 0) >= 2:
+                    continue
+                counts[expert_id] = counts.get(expert_id, 0) + 1
+                by_expert.setdefault(expert_id, []).append(framework.id)
+                assigned.append(expert_id)
+            if not assigned:
+                continue
+            seen_frameworks.add(framework.id)
+            matches.append(match.model_copy(update={"assigned_expert_ids": assigned}))
+        self.policy_version = FRAMEWORK_POLICY_VERSION
+        self.matches = matches
+        self.by_expert = by_expert
+        return self
+
+
+class FrameworkFactMisclassification(BaseModel):
+    claim_ref: str
+    framework_id: str | None = None
+    reason: str
+
+    @field_validator("reason")
+    @classmethod
+    def sanitize_reason(cls, value: str) -> str:
+        return value if value in _FRAMEWORK_MISCLASSIFICATION_REASONS else "framework_claim_mislabeled"
+
+
+class FrameworkAssessment(BaseModel):
+    misclassified_fact_claims: list[FrameworkFactMisclassification] = Field(default_factory=list)
+    framework_overreach_labels: list[str] = Field(default_factory=list)
+    rejected_framework_ids: list[str] = Field(default_factory=list)
+
+    @field_validator("framework_overreach_labels")
+    @classmethod
+    def sanitize_overreach_labels(cls, values: list[str]) -> list[str]:
+        return list(
+            dict.fromkeys(
+                value if value in _FRAMEWORK_OVERREACH_LABELS else "framework_overreach"
+                for value in values
+            )
+        )
+
+
+class FrameworkSelectionSummary(BaseModel):
+    policy_version: str
+    selected_framework_ids: list[str] = Field(default_factory=list)
+    by_expert: dict[str, list[str]] = Field(default_factory=dict)
+    reason_labels_by_framework: dict[str, list[str]] = Field(default_factory=dict)
+    retrieval_status_by_expert: dict[str, str] = Field(default_factory=dict)
+    rejected_framework_ids: list[str] = Field(default_factory=list)
+    selector_error_labels: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def sanitize_summary(self) -> "FrameworkSelectionSummary":
+        known_ids = set(FRAMEWORK_REGISTRY)
+        self.policy_version = FRAMEWORK_POLICY_VERSION
+        self.selected_framework_ids = [
+            framework_id
+            for framework_id in dict.fromkeys(self.selected_framework_ids)
+            if framework_id in known_ids
+        ][:3]
+        self.by_expert = {
+            expert_id: [
+                framework_id
+                for framework_id in dict.fromkeys(framework_ids)
+                if framework_id in known_ids
+            ][:2]
+            for expert_id, framework_ids in self.by_expert.items()
+            if framework_ids
+        }
+        self.reason_labels_by_framework = {
+            framework_id: [
+                label for label in dict.fromkeys(labels) if label in _FRAMEWORK_REASON_LABELS
+            ]
+            for framework_id, labels in self.reason_labels_by_framework.items()
+            if framework_id in known_ids
+        }
+        self.retrieval_status_by_expert = {
+            expert_id: (
+                status if status in _FRAMEWORK_RETRIEVAL_STATUSES else "framework_unavailable"
+            )
+            for expert_id, status in self.retrieval_status_by_expert.items()
+        }
+        self.rejected_framework_ids = [
+            framework_id
+            for framework_id in dict.fromkeys(self.rejected_framework_ids)
+            if framework_id in known_ids
+        ]
+        self.selector_error_labels = [
+            label for label in dict.fromkeys(self.selector_error_labels)
+            if label == "framework_selector_unavailable"
+        ]
+        return self
+
+
 class EvidenceAssessment(BaseModel):
     supported_claims: list[str] = Field(default_factory=list)
     weak_or_unsupported_claims: list[str] = Field(default_factory=list)
@@ -142,6 +316,7 @@ class EvidenceAssessment(BaseModel):
     knowledge_status_by_expert: dict[str, KnowledgeStatus] = Field(default_factory=dict)
     framework_fact_confusions: list[str] = Field(default_factory=list)
     historical_context: HistoricalContextAssessment | None = None
+    framework_assessment: FrameworkAssessment = Field(default_factory=FrameworkAssessment)
     parse_error: bool = False
 
 
@@ -177,6 +352,21 @@ class CouncilOSResult(BaseModel):
     knowledge_status_by_expert: dict[str, KnowledgeStatus] = Field(default_factory=dict)
     errors: list[str] = Field(default_factory=list)
     learning_context_summary: LearningContextSummary | None = None
+    framework_selection_summary: FrameworkSelectionSummary | None = None
+
+    @model_validator(mode="after")
+    def normalize_framework_retrieval_diagnostics(self) -> "CouncilOSResult":
+        summary = self.framework_selection_summary
+        if summary is None:
+            return self
+        for expert_id, knowledge_status in self.knowledge_status_by_expert.items():
+            if not summary.by_expert.get(expert_id):
+                continue
+            if knowledge_status == "disabled":
+                summary.retrieval_status_by_expert[expert_id] = "framework_disabled"
+            elif knowledge_status == "unavailable":
+                summary.retrieval_status_by_expert[expert_id] = "framework_unavailable"
+        return self
 
 
 def extract_json_object(text: str) -> dict:
