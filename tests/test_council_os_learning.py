@@ -214,8 +214,12 @@ async def test_stage_exposure_and_evidence_judge_filtering_keep_rejected_analogy
     chairman = next(call for call in llm.calls if call["stage"] == "CHAIRMAN")
     assert ACCEPTED_ID in chairman["user"]
     assert REJECTED_ID not in chairman["user"]
+    assert "overconfidence" not in chairman["user"]
     assert "protected minority" in chairman["system"].lower()
     assert result.learning_context_summary.rejected_analogies[0].decision_id == REJECTED_ID
+    assert result.learning_context_summary.analogy_count == 1
+    assert result.learning_context_summary.active_sample_strengths == {"growth": "normal"}
+    assert result.learning_context_summary.bias_alerts == []
     assert result.learning_context_summary.influenced_final_stage is True
 
 
