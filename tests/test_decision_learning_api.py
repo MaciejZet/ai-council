@@ -56,7 +56,9 @@ def test_provider_factory_is_session_scoped_and_invalid_session_disables_learnin
     db = tmp_path / "decisions.db"
     seed_history(db)
     store = DecisionMemoryStore(db)
-    validate = lambda token: {"token-a": "user-a", "token-b": "user-b"}.get(token)
+
+    def validate(token):
+        return {"token-a": "user-a", "token-b": "user-b"}.get(token)
 
     provider_a = build_learning_context_provider(store, validate, "token-a")
     provider_invalid = build_learning_context_provider(store, validate, "bad")
