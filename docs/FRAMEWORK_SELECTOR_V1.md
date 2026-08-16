@@ -50,9 +50,10 @@ The retrieval diagnostic is one of:
 - `framework_no_match_fallback_ok`
 - `framework_no_match_fallback_no_matches`
 - `framework_unavailable`
+- `framework_disabled`
 - `base_retrieval`
 
-These labels are safe diagnostics. Raw retrieved text is not copied into the framework summary.
+These labels are safe diagnostics. `framework_disabled` means knowledge use was intentionally disabled, so no backend retry is attempted. Raw retrieved text is not copied into the framework summary.
 
 ## Epistemic rule: `[FMW]`
 
