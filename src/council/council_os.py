@@ -137,8 +137,8 @@ class CouncilOS:
                 '  "recommendation": "string",',
                 '  "confidence": 0.0,',
                 '  "claims": [{"label":"F|A|I|FMW|O","text":"string","source_ids":[]}],',
-                '  "assumptions": ["string"]',
-                '  "risks": ["string"]',
+                '  "assumptions": ["string"],',
+                '  "risks": ["string"],',
                 '  "what_changes_my_mind": ["string"]',
                 "}",
             ]
