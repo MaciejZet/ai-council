@@ -6,6 +6,9 @@ from src.council.council_os import CouncilOS
 from src.council.council_os_models import (
     Claim,
     ClaimLabel,
+    CouncilOSResult,
+    CouncilVerdict,
+    DecisionVote,
     EvidenceAssessment,
     ExpertMemo,
     FrameworkAssessment,
@@ -385,3 +388,133 @@ async def test_framework_summary_tracks_selection_retrieval_and_rejections():
     assert summary.selected_framework_ids == ["positioning_category"]
     assert summary.rejected_framework_ids == ["positioning_category"]
     assert "marketing" in summary.retrieval_status_by_expert
+
+
+@pytest.mark.asyncio
+async def test_framework_fallback_unavailable_keeps_unavailable_diagnostic():
+    calls = []
+
+    def retriever(query, **kwargs):
+        calls.append(kwargs)
+        if kwargs.get("framework_tags"):
+            return KnowledgeRetrievalResult(status="no_matches")
+        return KnowledgeRetrievalResult(status="unavailable", error_code="backend_down")
+
+    council = CouncilOS(FrameworkLLM(), retriever=retriever)
+    blind = await council._run_blind_memos(
+        "position the offer",
+        [EXPERT_REGISTRY["marketing"]],
+        selection_for(),
+    )
+
+    assert len(calls) == 2
+    assert blind.knowledge_status_by_expert["marketing"] == "unavailable"
+    summary = CouncilOS._framework_summary(selection_for(), blind, None, [])
+    result = CouncilOSResult(
+        profile=ProblemProfile(primary_domain="marketing", decision_kind="marketing"),
+        routed_experts=["marketing"],
+        verdict=CouncilVerdict(
+            verdict=DecisionVote.DEFER,
+            recommendation="n/a",
+            confidence=0.0,
+            consensus="n/a",
+            key_disagreement="n/a",
+            minority_report="",
+        ),
+        knowledge_status_by_expert=blind.knowledge_status_by_expert,
+        framework_selection_summary=summary,
+    )
+    assert result.framework_selection_summary.retrieval_status_by_expert["marketing"] == "framework_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_framework_disabled_does_not_report_backend_failure_or_retry():
+    calls = []
+
+    def retriever(query, **kwargs):
+        calls.append(kwargs)
+        return KnowledgeRetrievalResult(status="disabled")
+
+    council = CouncilOS(FrameworkLLM(), retriever=retriever)
+    blind = await council._run_blind_memos(
+        "position the offer",
+        [EXPERT_REGISTRY["marketing"]],
+        selection_for(),
+    )
+
+    assert len(calls) == 1
+    assert blind.knowledge_status_by_expert["marketing"] == "disabled"
+    summary = CouncilOS._framework_summary(selection_for(), blind, None, [])
+    result = CouncilOSResult(
+        profile=ProblemProfile(primary_domain="marketing", decision_kind="marketing"),
+        routed_experts=["marketing"],
+        verdict=CouncilVerdict(
+            verdict=DecisionVote.DEFER,
+            recommendation="n/a",
+            confidence=0.0,
+            consensus="n/a",
+            key_disagreement="n/a",
+            minority_report="",
+        ),
+        knowledge_status_by_expert=blind.knowledge_status_by_expert,
+        framework_selection_summary=summary,
+    )
+    assert result.framework_selection_summary.retrieval_status_by_expert["marketing"] == "framework_disabled"
+
+
+def test_framework_assessment_reasons_are_fixed_labels_not_model_free_text():
+    memo = ExpertMemo(
+        expert_id="marketing",
+        vote="TEST",
+        recommendation="test",
+        confidence=0.6,
+        claims=[Claim(label=ClaimLabel.FACT, text="x")],
+    )
+    raw = FrameworkAssessment(
+        misclassified_fact_claims=[
+            FrameworkFactMisclassification(
+                claim_ref="marketing:0",
+                framework_id="positioning_category",
+                reason="PRIVATE_REASON_SENTINEL from source text",
+            )
+        ],
+        framework_overreach_labels=["PRIVATE_OVERREACH_SENTINEL from source text"],
+        rejected_framework_ids=["positioning_category"],
+    )
+
+    sanitized = CouncilOS._sanitize_framework_assessment(raw, selection_for(), [memo])
+    payload = sanitized.model_dump_json()
+
+    assert "PRIVATE_REASON_SENTINEL" not in payload
+    assert "PRIVATE_OVERREACH_SENTINEL" not in payload
+    assert sanitized.misclassified_fact_claims[0].reason == "framework_claim_mislabeled"
+    assert sanitized.framework_overreach_labels == ["framework_overreach"]
+
+
+def test_custom_selector_output_is_constrained_to_registry_and_routed_experts():
+    selection = FrameworkSelection(
+        policy_version="attacker-policy",
+        matches=[
+            FrameworkMatch(
+                framework_id="unknown_framework",
+                score=999,
+                reason_labels=["PRIVATE_REASON_SENTINEL"],
+                assigned_expert_ids=["unknown_expert"],
+            ),
+            FrameworkMatch(
+                framework_id="positioning_category",
+                score=9,
+                reason_labels=["primary_domain", "PRIVATE_REASON_SENTINEL"],
+                assigned_expert_ids=["marketing", "unknown_expert"],
+            ),
+        ],
+        by_expert={"unknown_expert": ["unknown_framework"], "marketing": ["positioning_category"]},
+    )
+
+    sanitized = FrameworkSelection.model_validate(selection)
+
+    assert sanitized.policy_version == "framework-selector-v1"
+    assert [item.framework_id for item in sanitized.matches] == ["positioning_category"]
+    assert sanitized.matches[0].assigned_expert_ids == ["marketing"]
+    assert sanitized.matches[0].reason_labels == ["primary_domain"]
+    assert sanitized.by_expert == {"marketing": ["positioning_category"]}
