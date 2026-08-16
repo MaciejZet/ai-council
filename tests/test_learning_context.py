@@ -22,12 +22,7 @@ class FakeStore:
 
 
 def memo(expert, vote, confidence=0.7):
-    return ExpertMemo(
-        expert_id=expert,
-        vote=vote,
-        recommendation="x",
-        confidence=confidence,
-    )
+    return ExpertMemo(expert_id=expert, vote=vote, recommendation="x", confidence=confidence)
 
 
 def test_sample_strength_thresholds():
@@ -185,3 +180,35 @@ def test_context_has_no_historical_free_text():
 
     assert "PRIVATE_QUERY" not in dumped
     assert "PRIVATE_POST" not in dumped
+
+
+def test_bias_alerts_require_weak_or_better_history():
+    weak_predictions = [
+        {
+            "decision_id": f"weak-{index}",
+            "expert_id": "growth",
+            "predicted_vote": "GO",
+            "confidence": 0.9,
+            "resolved_vote": "NO-GO",
+            "primary_domain": "growth",
+        }
+        for index in range(5)
+    ]
+    low_sample_predictions = weak_predictions[:4]
+
+    weak = LearningContextBuilder(FakeStore([], weak_predictions)).build(
+        "u1",
+        ProblemProfile(primary_domain="growth"),
+        ["growth"],
+        [memo("growth", DecisionVote.GO)],
+    )
+    low_sample = LearningContextBuilder(FakeStore([], low_sample_predictions)).build(
+        "u1",
+        ProblemProfile(primary_domain="growth"),
+        ["growth"],
+        [memo("growth", DecisionVote.GO)],
+    )
+
+    assert "overconfidence" in weak.bias_alerts
+    assert "go_bias" in weak.bias_alerts
+    assert low_sample.bias_alerts == []
