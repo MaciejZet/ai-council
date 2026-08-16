@@ -67,7 +67,7 @@ The selector prefers an empty result over weak forced matches. A normal decision
 
 A framework tag is a retrieval preference. It is not a hard dependency. If framework-specific retrieval returns `no_matches`, Council OS retries with the existing domain/expert filters.
 
-Infrastructure failure remains distinct from `no_matches`. An `unavailable` framework-specific retrieval does not trigger repeated backend calls unless the fallback is explicitly safe under the existing retriever contract.
+Infrastructure failure remains distinct from `no_matches`. An `unavailable` framework-specific retrieval does not trigger a second backend call in v1.
 
 ## Architecture
 
@@ -77,14 +77,14 @@ Create `src/council/framework_registry.py`.
 
 The module owns immutable framework definitions and registry versioning.
 
-Suggested model:
+Use this contract:
 
 ```python
 @dataclass(frozen=True)
 class FrameworkDefinition:
     id: str
     name: str
-    domains: tuple[str, ...]
+    profile_domains: tuple[str, ...]
     decision_kinds: tuple[str, ...]
     expert_ids: tuple[str, ...]
     trigger_keywords: tuple[str, ...]
@@ -92,6 +92,8 @@ class FrameworkDefinition:
     diagnostic_questions: tuple[str, ...]
     description: str
 ```
+
+`profile_domains` uses the existing `ProblemProfile.primary_domain` and `secondary_domains` vocabulary: `strategy`, `marketing`, `sales`, `offer_pricing`, `product_customer`, `growth`, `operator`.
 
 The description and diagnostic questions must be short, original wording. They must not quote or reconstruct book passages.
 
@@ -101,169 +103,170 @@ Registry constant:
 FRAMEWORK_POLICY_VERSION = "framework-selector-v1"
 ```
 
-### Initial registry
+Registry order is part of the deterministic tie-break contract.
 
-V1 starts with a small set that maps cleanly to current Council OS roles.
+## Initial registry
 
-#### `strategic_choice`
+V1 starts with 8 frameworks. The ids, matching fields, tags, and questions below are normative for v1.
 
-Purpose: isolate the real strategic challenge, the explicit choice, trade-offs, and a coherent action set.
+### `strategic_choice`
 
-Primary domains: `strategy`, `business`.
+- profile domains: `strategy`, `operator`
+- decision kinds: `strategy`, `operations`
+- expert ids: `strategy`, `operator`
+- trigger keywords: `strategy`, `strategic`, `competition`, `competitive`, `focus`, `resource allocation`, `expansion`, `acquisition`, `merger`, `strategia`, `strategiczny`, `konkurencja`, `przewaga`, `alokacja zasobów`, `ekspansja`, `przejęcie`, `fuzja`
+- framework tags: `strategic_choice`, `good_strategy`, `resource_allocation`
+- description: isolate the decisive challenge, the actual choice, the trade-off, and the actions that must reinforce one another
+- diagnostic questions:
+  - What is the decisive constraint or challenge?
+  - Which real alternative is being rejected?
+  - What actions must reinforce one another for the choice to work?
 
-Experts: `strategy`, `operator`, `chairman`.
+### `competitive_advantage`
 
-Example tags: `strategic_choice`, `good_strategy`, `resource_allocation`.
+- profile domains: `strategy`, `product_customer`
+- decision kinds: `strategy`, `product_customer`
+- expert ids: `strategy`, `product_customer`
+- trigger keywords: `competitive advantage`, `advantage`, `moat`, `differentiate`, `differentiation`, `unique`, `proprietary`, `substitute`, `przewaga`, `przewaga konkurencyjna`, `wyróżnik`, `unikalny`, `substytut`
+- framework tags: `competitive_advantage`, `moat`, `zero_to_one`
+- description: test whether the proposal creates a durable reason to win after customers and competitors react
+- diagnostic questions:
+  - What is meaningfully different from the closest substitute?
+  - Why would that advantage persist after competitors respond?
+  - Which assumption would make the claimed advantage disappear?
 
-Diagnostic questions:
+### `positioning_category`
 
-- What is the decisive constraint or challenge?
-- Which real alternative is being rejected?
-- What actions must be mutually reinforcing for the choice to work?
+- profile domains: `marketing`, `sales`
+- decision kinds: `marketing`, `sales`
+- expert ids: `marketing`, `sales`
+- trigger keywords: `positioning`, `position`, `category`, `brand`, `message`, `messaging`, `segment`, `audience`, `pozycjonowanie`, `kategoria`, `marka`, `komunikat`, `segment`
+- framework tags: `positioning`, `category`, `marketing_laws`
+- description: clarify the buyer's category, target customer, useful contrast, and message
+- diagnostic questions:
+  - What category does the buyer use to understand this offer?
+  - What is the clearest contrast with the main alternative?
+  - Which customer segment is most likely to care about that contrast now?
 
-#### `competitive_advantage`
+### `value_equation`
 
-Purpose: test whether the proposal creates a durable reason to win rather than temporary activity.
+- profile domains: `offer_pricing`, `sales`, `marketing`
+- decision kinds: `pricing`, `sales`, `marketing`
+- expert ids: `offer_pricing`, `sales`, `marketing`
+- trigger keywords: `price`, `pricing`, `offer`, `package`, `packaging`, `guarantee`, `discount`, `margin`, `willingness to pay`, `cena`, `ceny`, `oferta`, `pakiet`, `gwarancja`, `rabat`, `marża`
+- framework tags: `value_equation`, `offer`, `pricing`, `risk_reversal`
+- description: stress-test perceived outcome value, speed, effort, risk, packaging, and price logic
+- diagnostic questions:
+  - Which outcome matters enough to pay for?
+  - What slows the buyer's path to that outcome?
+  - Which effort, risk, or uncertainty suppresses perceived value?
 
-Primary domains: `strategy`, `innovation`, `business`.
+### `customer_job_evidence`
 
-Experts: `strategy`, `product_customer`, `chairman`.
+- profile domains: `product_customer`, `growth`
+- decision kinds: `product_customer`, `growth`
+- expert ids: `product_customer`, `growth`
+- trigger keywords: `customer`, `user`, `problem`, `pain`, `job to be done`, `jtbd`, `adoption`, `retention`, `churn`, `research`, `klient`, `użytkownik`, `problem`, `ból`, `adopcja`, `retencja`, `badania klientów`
+- framework tags: `jtbd`, `customer_research`, `problem_evidence`
+- description: separate the proposed product idea from evidence of a real customer job, pain, and adoption behavior
+- diagnostic questions:
+  - What job is the customer already trying to complete?
+  - What current behavior proves the problem matters?
+  - What evidence would show that the proposed solution is not the real answer?
 
-Example tags: `competitive_advantage`, `moat`, `zero_to_one`.
+### `growth_loop`
 
-Diagnostic questions:
+- profile domains: `growth`, `marketing`, `product_customer`
+- decision kinds: `growth`, `marketing`, `product_customer`
+- expert ids: `growth`, `marketing`, `product_customer`
+- trigger keywords: `growth`, `referral`, `viral`, `acquisition`, `activation`, `retention`, `channel`, `conversion`, `loop`, `wzrost`, `akwizycja`, `aktywacja`, `retencja`, `kanał`, `konwersja`, `pętla`
+- framework tags: `growth_loop`, `acquisition`, `retention`, `referral`
+- description: test whether acquisition, activation, retention, or referral creates a repeatable reinforcing loop
+- diagnostic questions:
+  - What user action creates the next unit of growth?
+  - Where does the loop lose energy?
+  - Which metric would prove that the loop compounds rather than merely spikes?
 
-- What is meaningfully different from the closest substitute?
-- Why would that advantage persist after competitors respond?
-- Which assumption would make the claimed advantage disappear?
+### `operating_constraint`
 
-#### `positioning_category`
+- profile domains: `operator`, `strategy`
+- decision kinds: `operations`, `strategy`
+- expert ids: `operator`, `strategy`
+- trigger keywords: `operations`, `process`, `implementation`, `execution`, `owner`, `kpi`, `cadence`, `workflow`, `bottleneck`, `constraint`, `operacje`, `proces`, `wdrożenie`, `egzekucja`, `właściciel`, `wąskie gardło`, `ograniczenie`
+- framework tags: `operations`, `constraint`, `execution`, `principles`
+- description: turn a recommendation into a sequence with one primary constraint, clear ownership, and stop conditions
+- diagnostic questions:
+  - What is the current bottleneck?
+  - Who owns the next irreversible or gating step?
+  - Which operating signal should trigger a stop, escalation, or resource shift?
 
-Purpose: clarify category, target customer, contrast, message, and mental availability.
+### `reversibility_experiment`
 
-Primary domains: `marketing`, `strategy`.
+- profile domains: none
+- decision kinds: none
+- expert ids: `strategy`, `product_customer`, `growth`, `operator`
+- trigger keywords: `test`, `experiment`, `pilot`, `a/b test`, `reversible`, `validate`, `validation`, `eksperyment`, `test`, `pilotaż`, `odwracalny`, `walidacja`
+- framework tags: `experiment`, `reversibility`, `test`, `decision_making`
+- description: choose the smallest reversible action that can resolve the key uncertainty before a larger commitment
+- diagnostic questions:
+  - Which assumption currently drives the decision most strongly?
+  - What is the cheapest test that could falsify it?
+  - What threshold would justify scaling, stopping, or deferring?
 
-Experts: `marketing`, `sales`.
-
-Example tags: `positioning`, `category`, `marketing_laws`.
-
-Diagnostic questions:
-
-- What category does the buyer use to understand this offer?
-- What is the clearest contrast with the main alternative?
-- Which customer segment is most likely to care about that contrast now?
-
-#### `value_equation`
-
-Purpose: stress-test perceived value, speed, effort, risk, packaging, and price logic.
-
-Primary domains: `pricing`, `marketing`, `business`.
-
-Experts: `offer_pricing`, `sales`, `marketing`.
-
-Example tags: `value_equation`, `offer`, `pricing`, `risk_reversal`.
-
-Diagnostic questions:
-
-- Which outcome matters enough to pay for?
-- What slows the buyer's path to that outcome?
-- Which effort, risk, or uncertainty suppresses perceived value?
-
-#### `customer_job_evidence`
-
-Purpose: separate the stated product idea from evidence of a real customer problem and adoption behavior.
-
-Primary domains: `business`, `innovation`, `design`.
-
-Experts: `product_customer`, `growth`.
-
-Example tags: `jtbd`, `customer_research`, `problem_evidence`.
-
-Diagnostic questions:
-
-- What job is the customer already trying to complete?
-- What current behavior proves the problem matters?
-- What evidence would show that the proposed solution is not the real answer?
-
-#### `growth_loop`
-
-Purpose: test whether acquisition and retention can reinforce one another instead of relying on isolated campaign spend.
-
-Primary domains: `marketing`, `business`.
-
-Experts: `growth`, `marketing`, `product_customer`.
-
-Example tags: `growth_loop`, `acquisition`, `retention`, `referral`.
-
-Diagnostic questions:
-
-- What user action creates the next unit of growth?
-- Where does the loop lose energy?
-- Which metric would prove that the loop compounds rather than merely spikes?
-
-#### `operating_constraint`
-
-Purpose: turn a recommendation into an executable sequence with one primary bottleneck, ownership, and stop conditions.
-
-Primary domains: `business`, `productivity`.
-
-Experts: `operator`, `strategy`.
-
-Example tags: `operations`, `constraint`, `execution`, `principles`.
-
-Diagnostic questions:
-
-- What is the current bottleneck?
-- Who owns the next irreversible or gating step?
-- Which operating signal should trigger a stop, escalation, or resource shift?
-
-#### `reversibility_experiment`
-
-Purpose: choose the smallest reversible action that can resolve the key uncertainty before larger commitment.
-
-Primary domains: broad business applicability.
-
-Experts: `growth`, `product_customer`, `operator`, `strategy`.
-
-Example tags: `experiment`, `reversibility`, `test`, `decision_making`.
-
-Diagnostic questions:
-
-- Which assumption currently drives the decision most strongly?
-- What is the cheapest test that could falsify it?
-- What threshold would justify scaling, stopping, or deferring?
+This framework intentionally has no domain or decision-kind score. It becomes eligible only when current-case language and reversibility make it relevant.
 
 ## Selection contract
 
 Create `src/council/framework_selector.py`.
 
-### Typed result
+### Typed models
 
-Suggested models in `council_os_models.py`:
+Add these models to `council_os_models.py`:
 
 ```text
 FrameworkMatch
-- framework_id
-- score
-- reason_labels
-- assigned_expert_ids
+- framework_id: str
+- score: int
+- reason_labels: list[str]
+- assigned_expert_ids: list[str]
 
 FrameworkSelection
-- policy_version
-- matches
-- by_expert
+- status: ok | empty | disabled | unavailable
+- policy_version: str
+- matches: list[FrameworkMatch]
+- by_expert: dict[str, list[str]]
+- error_labels: list[str]
+
+FrameworkClaimRef
+- expert_id: str
+- claim_index: int
+- issue_label: framework_as_fact | framework_overreach
+
+FrameworkAssessment
+- misclassified_fact_claims: list[FrameworkClaimRef]
+- rejected_framework_ids: list[str]
+- overreach_labels: list[str]
 
 FrameworkSelectionSummary
-- policy_version
-- selected_framework_ids
-- by_expert
-- reason_labels_by_framework
-- retrieval_status_by_expert
+- status: ok | empty | disabled | unavailable
+- policy_version: str
+- selected_framework_ids: list[str]
+- by_expert: dict[str, list[str]]
+- reason_labels_by_framework: dict[str, list[str]]
+- retrieval_status_by_expert: dict[str, str]
+- rejected_framework_ids: list[str]
+- framework_issue_labels: list[str]
 ```
 
-No field contains book text, private notes, retrieved passages, or source ids.
+No field contains book text, private notes, retrieved passages, historical postmortems, or private source ids.
 
-### Inputs
+### Selector interface
+
+Use a callable boundary equivalent to:
+
+```text
+FrameworkSelector(query, profile, routed_expert_ids) -> FrameworkSelection
+```
 
 The selector accepts only:
 
@@ -271,33 +274,38 @@ The selector accepts only:
 - `ProblemProfile`;
 - routed domain expert ids.
 
-It does not accept:
-
-- Decision Memory history;
-- prior outcomes;
-- blind memos;
-- rebuttals;
-- Red Team output;
-- Evidence Judge output;
-- private RAG chunks.
+It does not accept Decision Memory history, prior outcomes, blind memos, rebuttals, Red Team output, Evidence Judge output, or private RAG chunks.
 
 ### Scoring
 
-Use explicit integer scoring.
-
-Suggested score:
+Use this exact integer scoring policy:
 
 ```text
-+4 primary-domain match
-+2 matching secondary domain, capped at +4
++4 primary profile-domain match
++2 per matching secondary profile domain, capped at +4
 +3 decision-kind match
-+2 each routed expert supported by the framework, capped at +4
-+1 matching trigger keyword, capped at +3
-+1 if `reversibility_experiment` matches a reversible or low/medium-risk decision with test/experiment language
-+1 if `strategic_choice` matches a hard-to-reverse or high-risk decision
++1 per routed expert supported by the framework, capped at +2
++1 per matching trigger keyword, capped at +3
++2 `reversibility_experiment` bonus when:
+   - profile.reversibility == "reversible", and
+   - query contains at least one of that framework's trigger keywords
++2 `strategic_choice` bonus when:
+   - profile.reversibility == "hard_to_reverse" or profile.risk_level == "high"
 ```
 
 A framework must score at least `5` to be eligible.
+
+Stable reason labels are:
+
+```text
+primary_domain:<domain>
+secondary_domain:<domain>
+decision_kind:<kind>
+routed_expert:<expert_id>
+keyword:<normalized_keyword>
+reversibility_bonus
+high_risk_strategy_bonus
+```
 
 Ties resolve by:
 
@@ -307,201 +315,220 @@ Ties resolve by:
 
 Select at most 3 frameworks globally.
 
-For each routed expert, assign only selected frameworks whose `expert_ids` include that expert. Cap expert assignment at 2 using the global score/order.
+For each routed expert, assign only selected frameworks whose `expert_ids` include that expert. Cap expert assignment at 2 using the global score and order.
 
-If no framework reaches the threshold, return an empty valid selection.
+If no framework reaches score 5, return `FrameworkSelection(status="empty")` with no matches.
 
 ### Keyword matching
 
-Use the same boundary-aware deterministic style already used by `business_routing.py`. Multi-word phrases may use casefolded substring matching. Single words must respect word boundaries.
+Use the same boundary-aware deterministic style already used by `business_routing.py`:
 
-Polish trigger aliases may be included directly in the registry where useful. Do not use translation or LLM calls during selection.
+- multi-word phrases use casefolded substring matching;
+- single words use word boundaries;
+- duplicate keyword matches after normalization count once;
+- no translation, stemming service, or LLM call is used during selection.
 
 ## Framework-aware retrieval
 
-Extend the existing retrieval functions with an optional parameter:
+Extend `query_knowledge_result`, `query_knowledge`, and the internal filter builder with:
 
 ```text
 framework_tags: list[str] | None = None
 ```
 
-`_build_filter` adds a `framework_tags` clause when the list is non-empty, using the same metadata-filter semantics currently used for `domains` and `experts`.
+When supplied, the Pinecone metadata filter adds one `framework_tags` clause using the same array-filter convention already used for `domains` and `experts`.
 
-### Per-expert policy
+When omitted or empty, the filter shape and behavior remain backward compatible.
+
+### Per-expert retrieval policy
 
 For each routed expert:
 
-1. collect framework tags from that expert's assigned framework lenses;
-2. if there are no assigned framework tags, use the existing retrieval path unchanged;
-3. query with `domains + experts + framework_tags`;
-4. when the result status is `ok`, use it;
-5. when the result status is `no_matches`, retry once with the current `domains + experts` filters and no framework tags;
-6. when the result is `unavailable`, preserve `unavailable` and avoid a second backend call by default;
-7. expose only a sanitized retrieval diagnostic, not the tag-filtered raw source payload.
+1. collect the union of `framework_tags` from that expert's assigned selected frameworks;
+2. if the union is empty, use the existing retrieval path unchanged;
+3. query once with `domains + experts + framework_tags`;
+4. if status is `ok`, use that result;
+5. if status is `no_matches`, retry exactly once with the existing `domains + experts` filters and no framework tags;
+6. if status is `unavailable`, preserve `unavailable` and do not issue the base fallback query;
+7. expose a sanitized retrieval diagnostic only.
 
-The fallback must be deterministic and covered by tests.
-
-### Retrieval diagnostics
-
-Per expert, track one of:
+Per-expert diagnostic labels are exactly:
 
 ```text
 framework_match
 framework_no_match_fallback_ok
 framework_no_match_fallback_no_matches
 framework_unavailable
-base_retrieval
+base_retrieval_ok
+base_retrieval_no_matches
+base_retrieval_unavailable
 ```
 
-These labels may appear in `FrameworkSelectionSummary` and Decision Memory capture.
+## Council OS integration
 
-## Blind-round prompt behavior
+Framework selection runs after `profile_problem` and `route_experts`, before any private retrieval or blind LLM call.
 
-Framework selection happens before expert retrieval and before any blind LLM call.
+`CouncilOS` accepts an optional selector dependency. Production defaults to the deterministic v1 selector. Tests and explicit configuration may inject a disabled selector returning `FrameworkSelection(status="disabled")`.
+
+If the selector raises unexpectedly, Council OS converts the failure to `FrameworkSelection(status="unavailable", error_labels=["framework_selector_unavailable"])` and continues with base retrieval.
+
+### Blind round
 
 Each blind expert sees only the framework cards assigned to that expert. A card contains:
 
 - framework id;
-- short public description;
-- 2-3 diagnostic questions.
+- short registry description;
+- the 3 registry diagnostic questions.
 
-Prompt doctrine:
+The blind prompt includes this doctrine:
 
 ```text
 Selected frameworks are analysis lenses. They do not establish facts about this case.
 Use [FMW] for material claims that come mainly from a framework.
 Use [F] only when supplied evidence independently supports the factual claim.
-A framework may be rejected when it does not fit the current case.
+Reject a framework when it does not fit the current case.
 ```
 
 Experts are not required to use every assigned framework.
 
-Blind prompts still contain no peer memos, consensus, historical Decision Memory context, or Chairman preference.
+Blind prompts still contain no peer memos, consensus, Decision Memory learning context, prior outcomes, or Chairman preference.
 
-## Red Team behavior
+### Decision Memory ordering
+
+Decision Memory v2 remains after blind memos. The order is fixed:
+
+```text
+framework selection
+-> framework-aware retrieval
+-> blind memos
+-> Decision Memory learning context
+-> rebuttals
+```
+
+Framework selection never consumes Decision Memory in v1.
+
+### Rebuttals
+
+Rebuttals may see the selected framework ids used by the participating experts so they can challenge a shared lens or explain why a framework does not fit. They receive no registry source provenance beyond the public framework card metadata.
+
+### Red Team
 
 Red Team receives the sanitized framework selection used by the domain experts.
 
 It must challenge:
 
-- whether the selected framework is actually applicable;
-- whether the council ignored a material alternative lens;
-- whether multiple experts produced correlated reasoning because they shared the same framework;
-- whether a framework is being treated as empirical evidence.
+- whether each selected framework is applicable;
+- whether a material alternative lens was ignored;
+- whether several experts produced correlated reasoning because they shared the same lens;
+- whether a framework rule is being treated as empirical evidence.
 
-Red Team does not select new frameworks in v1.
+Red Team does not select or add frameworks in v1.
 
-## Evidence Judge behavior
+### Evidence Judge
 
-Evidence Judge receives:
-
-- selected framework ids and expert assignments;
-- expert claims with existing claim labels;
-- current provenance/status;
-- the normal Red Team and rebuttal material;
-- Decision Memory learning context under the existing v2 rules.
-
-Extend `EvidenceAssessment` with a small typed framework assessment, for example:
+Extend `EvidenceAssessment` with:
 
 ```text
-FrameworkAssessment
-- misclassified_fact_claims
-- framework_overreach_labels
-- rejected_framework_ids
+framework_assessment: FrameworkAssessment
 ```
 
-`misclassified_fact_claims` should use stable claim identifiers or sanitized short labels when available. Avoid copying long private text into the assessment.
+Evidence Judge receives selected framework ids and expert assignments, the existing expert claims and labels, current provenance/status, rebuttals, Red Team output, and the existing Decision Memory learning context.
 
-Evidence Judge may mark a selected framework as inapplicable for final synthesis. This does not retroactively alter the blind memo; it limits downstream reliance on the framework.
+When a `[F]` claim appears to depend mainly on a framework, Evidence Judge records a `FrameworkClaimRef` using `expert_id` and the zero-based position of the claim in that expert's `claims` list. It does not copy the claim text into `FrameworkAssessment`.
 
-## Chairman behavior
+Evidence Judge may reject a selected framework as inapplicable for final synthesis. This does not alter the historical blind memo; it limits downstream reliance on the lens.
 
-Chairman receives the framework selection plus Evidence Judge framework assessment.
+### Chairman
 
-Instructions:
+Chairman receives the framework selection plus `FrameworkAssessment`.
+
+The Chairman prompt states:
 
 - current evidence outranks framework precedent;
 - a rejected framework must not support the final recommendation;
-- framework agreement across experts is not independent confirmation;
-- the final explanation should identify a framework only when it materially shaped the reasoning;
-- a framework cannot independently raise confidence.
+- agreement caused by a shared framework is not independent confirmation;
+- a framework may be named in the explanation only when it materially shaped the reasoning;
+- a framework cannot independently raise confidence or determine a vote.
 
-No automatic vote or confidence multiplier is added in v1.
+No vote multiplier or confidence multiplier is added in v1.
 
 ## Decision Memory integration
 
 Extend `CouncilOSResult` with optional `framework_selection_summary`.
 
-Decision Memory persists only that sanitized summary. No new historical text fields are introduced.
+`FrameworkSelectionSummary` is built after Evidence Judge so it can include rejected framework ids and issue labels. Decision Memory persists only this summary.
 
-The stored summary supports later analysis such as:
+The summary supports later analysis of:
 
-- which framework ids were active;
-- which experts received each framework;
-- whether framework-specific retrieval matched or fell back;
-- whether Evidence Judge rejected a framework;
-- policy version used for the decision.
+- active framework ids;
+- expert assignments;
+- deterministic reason labels;
+- framework-specific retrieval success or fallback;
+- Evidence Judge rejection;
+- policy version.
 
-V1 does not use Decision Memory outcomes to change future framework scores. That feedback loop can be evaluated only after enough resolved decisions exist.
+V1 does not use resolved outcomes to alter future framework scores or registry order.
 
 ### Storage migration
 
-Add an optional `framework_selection_json` column to the existing `decisions` table using the same additive migration pattern as `learning_context_json`.
+Add nullable `framework_selection_json` to `decisions` using the same additive migration pattern as `learning_context_json`.
 
-Existing v1/v2 databases must retain all rows and continue to load when the new column is absent before initialization.
+Existing v1/v2 databases retain every row. Before adding the column, initialization checks `PRAGMA table_info(decisions)` and executes one `ALTER TABLE` only when the column is absent.
+
+Decision detail responses may expose the sanitized framework summary as an additive field. Existing list and calibration endpoints do not need new framework fields in v1.
 
 ## Privacy boundary
 
-The public repository may contain:
+The public repository may contain framework ids, short original descriptions, generic diagnostic questions, deterministic tag names, and selection rules.
 
-- framework ids;
-- short original descriptions;
-- generic diagnostic questions;
-- public tag names;
-- deterministic selection rules.
-
-It must not contain:
-
-- private book text;
-- private book summaries;
-- Drive file ids;
-- raw retrieved chunks;
-- private source paths;
-- copyrighted chapter excerpts;
-- historical postmortem/notes copied into framework prompts.
+It must not contain private book text, private book summaries, Drive file ids, private source paths, raw retrieved chunks, copyrighted chapter excerpts, or historical postmortem/notes copied into framework prompts.
 
 Framework-aware retrieval can use private chunks internally exactly as current private RAG does. External `CouncilOSResult`, Decision Memory diagnostics, logs, and public source displays remain sanitized.
 
 ## Failure behavior
 
-Framework selection is non-critical.
+Framework selection and framework-specific retrieval are non-critical.
 
-If the selector raises unexpectedly:
+Selector exception:
 
-- Council OS continues with an empty framework selection;
-- retrieval uses the current expert/domain path;
-- the result records a fixed sanitized label such as `framework_selector_unavailable`;
-- no exception text is exposed to prompts or API output.
+```text
+status = unavailable
+error_labels = ["framework_selector_unavailable"]
+behavior = continue with base expert/domain retrieval
+```
 
-If framework-filtered retrieval returns no matches:
+Framework-specific `no_matches`:
 
-- retry base expert/domain retrieval once;
-- record the fallback diagnostic.
+```text
+behavior = one base expert/domain fallback query
+```
 
-If the knowledge backend is unavailable:
+Framework-specific `unavailable`:
 
-- preserve the existing knowledge status semantics;
-- do not manufacture a framework-based answer as a replacement for missing evidence.
+```text
+behavior = preserve unavailable; no second retrieval call
+```
+
+Evidence Judge framework-assessment parse failure:
+
+```text
+framework_assessment = empty safe FrameworkAssessment
+error label = framework_assessment_parse_error
+```
+
+No raw exception text enters prompts, SSE payloads, Decision Memory, or public API errors.
 
 ## Backward compatibility
 
 `query_knowledge_result` and `query_knowledge` keep their existing behavior when `framework_tags` is omitted.
 
-`CouncilOS` remains usable with no explicit framework selector dependency by using the deterministic default selector or a disabled selector in tests/configuration.
+New `EvidenceAssessment` and `CouncilOSResult` fields have safe defaults so older construction paths remain valid.
 
-New result fields use defaults so older construction paths remain valid.
+Council OS remains usable with framework selection disabled or empty.
 
-Decision Memory API endpoints remain additive. Existing clients can ignore the new framework summary.
+Decision Memory API changes are additive. Existing clients can ignore `framework_selection_summary`.
+
+No `.github/workflows` file is changed by this phase.
 
 ## Testing strategy
 
@@ -512,41 +539,47 @@ Implementation follows TDD.
 Cover:
 
 - registry ids are unique;
-- registry descriptions/questions contain no obvious private-source identifiers;
+- registry order is stable;
+- registry descriptions/questions contain no private-source identifiers or copied source text;
 - deterministic scoring for representative strategy, pricing, marketing, product, growth, and operations queries;
-- exact threshold behavior at score `5`;
+- exact threshold behavior at score 5;
+- exact score-reason labels;
 - max 3 selected globally;
 - max 2 assigned per expert;
 - deterministic tie breaking;
-- empty selection when all candidates score below threshold;
-- selector accepts only current-case inputs and has no Decision Memory dependency.
+- `reversibility_experiment` does not qualify merely because common experts are routed;
+- empty selection when all candidates score below 5;
+- selector has no Decision Memory dependency.
 
 ### Retrieval tests
 
 Cover:
 
-- `framework_tags` enters the Pinecone metadata filter only when supplied;
-- existing retrieval calls without framework tags produce the old filter shape;
+- `framework_tags` enters the metadata filter only when supplied;
+- existing calls without framework tags produce the old filter shape;
 - framework match returns directly;
 - `no_matches` performs exactly one base fallback;
-- `unavailable` does not silently become `no_matches`;
-- fallback diagnostics are deterministic;
+- `unavailable` performs no fallback;
+- diagnostics use only the specified labels;
 - returned chunks retain current `framework_tags` metadata behavior.
 
 ### Council OS tests
 
 Cover:
 
-- selector runs after routing and before any retrieval/blind LLM call;
+- selector runs after routing and before retrieval;
+- framework-aware retrieval runs before blind LLM calls;
 - blind prompt includes only frameworks assigned to that expert;
-- blind prompt contains no Decision Memory learning context;
+- blind prompt contains no Decision Memory learning context or peer output;
 - framework cards contain no private source text;
-- `[FMW]` doctrine appears in blind prompt;
+- `[FMW]` doctrine appears in blind prompts;
+- Decision Memory still begins only after blind memos;
 - Red Team receives sanitized framework ids/assignments;
 - Evidence Judge can reject a framework;
-- Chairman cannot rely on a framework rejected by Evidence Judge;
+- a `[F]` framework misuse is referenced by `expert_id + claim_index` without copying claim text into assessment;
+- Chairman cannot rely on an Evidence-Judge-rejected framework;
 - selector failure falls back to normal Council OS;
-- existing learning-context ordering remains `blind -> Decision Memory -> rebuttal`.
+- disabled/empty selection preserves existing behavior.
 
 ### Decision Memory tests
 
@@ -555,56 +588,45 @@ Cover:
 - additive migration of a v2 database to include `framework_selection_json`;
 - capture persists only `FrameworkSelectionSummary`;
 - decision detail exposes sanitized framework diagnostics;
-- no framework prompt text, RAG chunk, private note, or source id is persisted.
+- no framework prompt, RAG chunk, private note, postmortem, or source id is persisted in the new JSON field.
 
 ### Privacy regression tests
 
-Use unique sentinels in:
+Use unique sentinels in private RAG chunk text, Drive/source ids, simulated private notes, Decision Memory postmortems, and selector exception messages.
 
-- private RAG chunk text;
-- Drive/source ids;
-- simulated private notes;
-- Decision Memory postmortems;
-- selector exception messages.
-
-Assert those sentinels do not enter:
-
-- framework registry output;
-- selection summary;
-- Decision Memory framework JSON;
-- public Council OS result;
-- logs or error labels under tested paths.
+Assert those sentinels do not enter the framework registry, selection summary, Decision Memory framework JSON, public Council OS result, or sanitized error labels.
 
 ## Local verification policy
 
-GitHub Actions are not an acceptance gate for this phase and workflow files are not modified as part of the feature.
+GitHub Actions are not an acceptance gate for this phase and workflow files are not modified.
 
 Before merge, run locally on code matching the PR head:
 
 - focused Framework Selector tests;
-- Council OS and Decision Memory regression tests relevant to changed contracts;
-- full available pytest suite when the local reconstructed checkout supports it;
+- Council OS and Decision Memory regressions relevant to changed contracts;
+- the full available pytest suite when the local checkout supports it;
 - project quality gate;
 - `python -m compileall`;
 - Ruff only if the local environment has it installed.
 
-Any unavailable local tool must be reported explicitly rather than treated as passing.
+Any unavailable local tool is reported explicitly rather than treated as passing.
 
 ## Acceptance criteria
 
 Framework Selector v1 is complete when all of the following hold:
 
-1. Selection is deterministic and uses only the current query, profile, routed experts, and a versioned registry.
+1. Selection is deterministic and uses only the current query, profile, routed experts, and the versioned registry.
 2. At most 3 frameworks are selected globally and at most 2 are assigned to one expert.
 3. Weak matches below score 5 produce no forced framework.
-4. Framework-specific RAG falls back once to ordinary expert/domain RAG on `no_matches`.
+4. Framework-specific RAG falls back exactly once to ordinary expert/domain RAG on `no_matches` and does not fallback on `unavailable`.
 5. Blind experts receive framework lenses before analysis but receive no Decision Memory history or peer output.
 6. Framework-derived claims remain explicitly separated from factual claims through `[FMW]` doctrine.
-7. Evidence Judge can reject framework applicability before final synthesis.
-8. Chairman cannot use an Evidence-Judge-rejected framework as support for the verdict.
-9. Council OS continues normally when framework selection fails or is disabled.
-10. Decision Memory stores only sanitized framework diagnostics.
-11. Existing v2 SQLite databases migrate additively without data loss.
-12. No private corpus text, source identifiers, Drive ids, notes, or historical postmortems enter public framework artifacts.
-13. Existing Council OS and Decision Memory behavior remains compatible when framework selection is empty or disabled.
-14. Local tests, quality gate, and compilation pass on the code being merged, with any unavailable tooling disclosed.
+7. Evidence Judge identifies framework-as-fact misuse by stable claim reference without storing the claim text in framework diagnostics.
+8. Evidence Judge can reject framework applicability before final synthesis.
+9. Chairman cannot use an Evidence-Judge-rejected framework as support for the verdict.
+10. Council OS continues normally when framework selection fails, is empty, or is disabled.
+11. Decision Memory stores only sanitized framework diagnostics.
+12. Existing v2 SQLite databases migrate additively without data loss.
+13. No private corpus text, private source identifiers, Drive ids, notes, or historical postmortems enter public framework artifacts.
+14. Existing Council OS, retriever, and Decision Memory behavior remains compatible when framework selection is empty or disabled.
+15. Local tests, quality gate, and compilation pass on the code being merged, with any unavailable tooling disclosed.
