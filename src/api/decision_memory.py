@@ -9,8 +9,15 @@ from urllib.parse import parse_qs
 from fastapi import APIRouter, FastAPI, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
+from src.council.council_os import (
+    LearningContextProvider,
+    bind_learning_context_provider,
+    reset_learning_context_provider,
+)
 from src.council.council_os_models import CouncilOSResult
+from src.council.learning_context import LearningContextBuilder
 from src.storage import user_db as user_store
+from src.storage.decision_learning import DecisionLearningStore
 from src.storage.decision_memory import DecisionMemoryStore
 
 logger = logging.getLogger(__name__)
@@ -26,6 +33,36 @@ class DecisionOutcomeRequest(BaseModel):
     experiment_result: str | None = Field(default=None, max_length=4000)
     postmortem: str | None = Field(default=None, max_length=8000)
     notes: str | None = Field(default=None, max_length=4000)
+
+
+def build_learning_context_provider_for_user(
+    store: DecisionMemoryStore,
+    user_id: str,
+) -> LearningContextProvider | None:
+    db_path = getattr(store, "db_path", None)
+    if db_path is None:
+        return None
+    builder = LearningContextBuilder(DecisionLearningStore(db_path))
+
+    def provider(profile: Any, routed_expert_ids: list[str], blind_memos: list[Any]):
+        return builder.build(user_id, profile, routed_expert_ids, blind_memos)
+
+    return provider
+
+
+def build_learning_context_provider(
+    store: DecisionMemoryStore,
+    validate_session: ValidateSession,
+    session_token: str | None,
+) -> LearningContextProvider | None:
+    try:
+        user_id = validate_session(session_token)
+    except Exception:
+        logger.warning("Decision Memory learning session validation failed")
+        return None
+    if not user_id:
+        return None
+    return build_learning_context_provider_for_user(store, user_id)
 
 
 class DecisionMemoryCaptureMiddleware:
@@ -65,19 +102,25 @@ class DecisionMemoryCaptureMiddleware:
             logger.warning("Decision Memory session validation failed")
             user_id = None
 
+        learning_provider = (
+            build_learning_context_provider_for_user(self.store, user_id)
+            if user_id
+            else None
+        )
+        learning_token = bind_learning_context_provider(learning_provider)
+
         if not user_id:
-            await self.app(scope, receive, send)
+            try:
+                await self.app(scope, receive, send)
+            finally:
+                reset_learning_context_provider(learning_token)
             return
 
         captured = False
 
         async def send_wrapper(message: dict[str, Any]) -> None:
             nonlocal captured
-            if (
-                not captured
-                and message.get("type") == "http.response.body"
-                and message.get("body")
-            ):
+            if not captured and message.get("type") == "http.response.body" and message.get("body"):
                 body = message["body"]
                 try:
                     text = body.decode("utf-8")
@@ -89,7 +132,10 @@ class DecisionMemoryCaptureMiddleware:
                     logger.warning("Decision Memory stream capture failed")
             await send(message)
 
-        await self.app(scope, receive, send_wrapper)
+        try:
+            await self.app(scope, receive, send_wrapper)
+        finally:
+            reset_learning_context_provider(learning_token)
 
     def _capture_event(self, text: str, user_id: str, query: str) -> tuple[str, bool]:
         if not text.startswith("data: "):
@@ -170,11 +216,7 @@ def install_decision_memory(
         return decision
 
     @router.put("/{decision_id}/outcome")
-    async def put_outcome(
-        request: Request,
-        decision_id: str,
-        body: DecisionOutcomeRequest,
-    ) -> dict[str, Any]:
+    async def put_outcome(request: Request, decision_id: str, body: DecisionOutcomeRequest) -> dict[str, Any]:
         user_id = require_user(request)
         outcome = call_store(
             store.upsert_outcome,
