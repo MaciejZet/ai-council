@@ -89,6 +89,7 @@ def _build_filter(
     source_type: str | None,
     domains: list[str] | None,
     experts: list[str] | None,
+    framework_tags: list[str] | None = None,
 ) -> dict[str, Any] | None:
     clauses: list[dict[str, Any]] = []
     if source_type:
@@ -99,6 +100,8 @@ def _build_filter(
         clauses.append({"domains": {"$in": domains}})
     if experts:
         clauses.append({"experts": {"$in": experts}})
+    if framework_tags:
+        clauses.append({"framework_tags": {"$in": framework_tags}})
     if len(clauses) > 1:
         return {"$and": clauses}
     if clauses:
@@ -113,6 +116,7 @@ def query_knowledge_result(
     source_type: str | None = None,
     domains: list[str] | None = None,
     experts: list[str] | None = None,
+    framework_tags: list[str] | None = None,
     min_score: float = 0.3,
     hybrid: bool = False,
     namespace: str | None = None,
@@ -140,6 +144,7 @@ def query_knowledge_result(
         source_type=source_type,
         domains=domains,
         experts=experts,
+        framework_tags=framework_tags,
     )
 
     try:
@@ -219,6 +224,7 @@ def query_knowledge(
     hybrid: bool = False,
     domains: list[str] | None = None,
     experts: list[str] | None = None,
+    framework_tags: list[str] | None = None,
     namespace: str | None = None,
 ) -> list[dict[str, Any]]:
     """Backward-compatible list-only wrapper around structured retrieval."""
@@ -229,6 +235,7 @@ def query_knowledge(
         source_type=source_type,
         domains=domains,
         experts=experts,
+        framework_tags=framework_tags,
         min_score=min_score,
         hybrid=hybrid,
         namespace=namespace,
