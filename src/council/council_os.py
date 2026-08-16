@@ -516,6 +516,11 @@ class CouncilOS:
         approved_bias_alerts = sorted(
             {flag for signal in approved_signals for flag in signal.flags}
         )
+        approved_protected_minority = [
+            expert_id
+            for expert_id in learning.protected_minority_expert_ids
+            if expert_id in usable
+        ]
         return {
             "status": learning.status,
             "approved_analogies": [
@@ -527,7 +532,7 @@ class CouncilOS:
                 signal.model_dump(mode="json") for signal in approved_signals
             ],
             "bias_alerts": approved_bias_alerts,
-            "protected_minority_expert_ids": learning.protected_minority_expert_ids,
+            "protected_minority_expert_ids": approved_protected_minority,
         }
 
     async def _run_chairman(
@@ -543,11 +548,13 @@ class CouncilOS:
         learning: LearningContext | None = None,
     ) -> CouncilVerdict:
         learning = learning or LearningContext(status="disabled")
+        approved_learning = self._approved_learning_payload(learning, evidence)
+        approved_protected_minority = approved_learning["protected_minority_expert_ids"]
         protected_instruction = (
             "Protected minority: explicitly address the dissent from "
-            + ", ".join(learning.protected_minority_expert_ids)
+            + ", ".join(approved_protected_minority)
             + "; do not automatically adopt it."
-            if learning.protected_minority_expert_ids
+            if approved_protected_minority
             else "No protected minority obligation is active."
         )
         system_prompt = "\n".join(
@@ -574,7 +581,6 @@ class CouncilOS:
             mode="json",
             exclude={"historical_context"},
         )
-        approved_learning = self._approved_learning_payload(learning, evidence)
         user_prompt = "\n".join(
             [
                 f"Decision question: {query}",
@@ -619,10 +625,15 @@ class CouncilOS:
             if signal.expert_id in usable_expert_ids
             and signal.sample_strength != "none"
         }
+        approved_protected_minority = [
+            expert_id
+            for expert_id in learning.protected_minority_expert_ids
+            if expert_id in usable_expert_ids
+        ]
         influenced = bool(
             assessment.accepted_analogy_ids
             or assessment.usable_calibration_expert_ids
-            or learning.protected_minority_expert_ids
+            or approved_protected_minority
         )
         return LearningContextSummary(
             status=learning.status,
@@ -637,7 +648,7 @@ class CouncilOS:
                     for flag in signal.flags
                 }
             ),
-            protected_minority_expert_ids=learning.protected_minority_expert_ids,
+            protected_minority_expert_ids=approved_protected_minority,
             rejected_analogies=assessment.rejected_analogies,
             influenced_final_stage=influenced,
         )
