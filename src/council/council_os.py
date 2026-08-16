@@ -513,6 +513,12 @@ class CouncilOS:
         assessment = evidence.historical_context or HistoricalContextAssessment()
         accepted = set(assessment.accepted_analogy_ids)
         usable = set(assessment.usable_calibration_expert_ids)
+        approved_signals = [
+            signal for signal in learning.expert_signals if signal.expert_id in usable
+        ]
+        approved_bias_alerts = sorted(
+            {flag for signal in approved_signals for flag in signal.flags}
+        )
         return {
             "status": learning.status,
             "approved_analogies": [
@@ -521,11 +527,9 @@ class CouncilOS:
                 if analogy.decision_id in accepted
             ],
             "approved_expert_signals": [
-                signal.model_dump(mode="json")
-                for signal in learning.expert_signals
-                if signal.expert_id in usable
+                signal.model_dump(mode="json") for signal in approved_signals
             ],
-            "bias_alerts": learning.bias_alerts if usable else [],
+            "bias_alerts": approved_bias_alerts,
             "protected_minority_expert_ids": learning.protected_minority_expert_ids,
         }
 
@@ -610,10 +614,12 @@ class CouncilOS:
             if evidence is not None and evidence.historical_context is not None
             else HistoricalContextAssessment()
         )
+        usable_expert_ids = set(assessment.usable_calibration_expert_ids)
         active_strengths = {
             signal.expert_id: signal.sample_strength
             for signal in learning.expert_signals
-            if signal.sample_strength != "none"
+            if signal.expert_id in usable_expert_ids
+            and signal.sample_strength != "none"
         }
         influenced = bool(
             assessment.accepted_analogy_ids
@@ -623,9 +629,16 @@ class CouncilOS:
         return LearningContextSummary(
             status=learning.status,
             scored_history_count=learning.scored_history_count,
-            analogy_count=len(learning.analog_decisions),
+            analogy_count=len(assessment.accepted_analogy_ids),
             active_sample_strengths=active_strengths,
-            bias_alerts=learning.bias_alerts,
+            bias_alerts=sorted(
+                {
+                    flag
+                    for signal in learning.expert_signals
+                    if signal.expert_id in usable_expert_ids
+                    for flag in signal.flags
+                }
+            ),
             protected_minority_expert_ids=learning.protected_minority_expert_ids,
             rejected_analogies=assessment.rejected_analogies,
             influenced_final_stage=influenced,
