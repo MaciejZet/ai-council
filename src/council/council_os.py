@@ -242,12 +242,8 @@ class CouncilOS:
     def _rebuttal_learning_payload(learning: LearningContext) -> dict[str, Any]:
         return {
             "status": learning.status,
-            "expert_signals": [
-                signal.model_dump(mode="json") for signal in learning.expert_signals
-            ],
-            "analog_decisions": [
-                analogy.model_dump(mode="json") for analogy in learning.analog_decisions
-            ],
+            "expert_signals": [signal.model_dump(mode="json") for signal in learning.expert_signals],
+            "analog_decisions": [analogy.model_dump(mode="json") for analogy in learning.analog_decisions],
         }
 
     @staticmethod
@@ -259,9 +255,7 @@ class CouncilOS:
             },
             "bias_alerts": learning.bias_alerts,
             "protected_minority_expert_ids": learning.protected_minority_expert_ids,
-            "analog_decisions": [
-                analogy.model_dump(mode="json") for analogy in learning.analog_decisions
-            ],
+            "analog_decisions": [analogy.model_dump(mode="json") for analogy in learning.analog_decisions],
         }
 
     def _rebuttal_system_prompt(self, expert: ExpertDefinition) -> str:
@@ -313,8 +307,9 @@ class CouncilOS:
         profile: ProblemProfile,
         experts: list[ExpertDefinition],
         memos: list[ExpertMemo],
-        learning: LearningContext,
+        learning: LearningContext | None = None,
     ) -> list[Rebuttal]:
+        learning = learning or LearningContext(status="disabled")
         memo_by_expert = {memo.expert_id: memo for memo in memos}
         participating = [expert for expert in experts if expert.id in memo_by_expert]
         tasks = []
@@ -334,8 +329,9 @@ class CouncilOS:
         profile: ProblemProfile,
         memos: list[ExpertMemo],
         rebuttals: list[Rebuttal],
-        learning: LearningContext,
+        learning: LearningContext | None = None,
     ) -> RedTeamReport:
+        learning = learning or LearningContext(status="disabled")
         consensus_vote, consensus_share = early_consensus_vote(memos)
         premature_consensus = consensus_vote is not None
         consensus_line = f"PREMATURE_CONSENSUS={'true' if premature_consensus else 'false'}"
@@ -441,8 +437,9 @@ class CouncilOS:
         memos: list[ExpertMemo],
         rebuttals: list[Rebuttal],
         red_team: RedTeamReport,
-        learning: LearningContext,
+        learning: LearningContext | None = None,
     ) -> EvidenceAssessment:
+        learning = learning or LearningContext(status="disabled")
         source_payload = {
             expert_id: {
                 "knowledge_status": blind.knowledge_status_by_expert.get(expert_id, "disabled"),
@@ -543,8 +540,9 @@ class CouncilOS:
         red_team: RedTeamReport,
         evidence: EvidenceAssessment,
         errors: list[str],
-        learning: LearningContext,
+        learning: LearningContext | None = None,
     ) -> CouncilVerdict:
+        learning = learning or LearningContext(status="disabled")
         protected_instruction = (
             "Protected minority: explicitly address the dissent from "
             + ", ".join(learning.protected_minority_expert_ids)
