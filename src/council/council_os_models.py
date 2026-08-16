@@ -4,6 +4,7 @@ import json
 import re
 from enum import StrEnum
 from typing import Literal
+from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -14,6 +15,7 @@ Reversibility = Literal["reversible", "hard_to_reverse"]
 RiskLevel = Literal["low", "medium", "high"]
 SampleStrength = Literal["none", "weak", "normal"]
 LearningStatus = Literal["ok", "insufficient_history", "disabled", "unavailable"]
+LiveEvidenceStatus = Literal["ok", "no_matches", "disabled", "unavailable"]
 
 
 class DecisionVote(StrEnum):
@@ -308,6 +310,157 @@ class FrameworkSelectionSummary(BaseModel):
         return self
 
 
+_LIVE_EVIDENCE_ERROR_LABELS = {
+    "live_query_redacted",
+    "partial_search_failure",
+    "live_evidence_unavailable",
+}
+_LIVE_EVIDENCE_REJECTION_REASONS = {
+    "weak_relevance",
+    "low_credibility",
+    "stale_or_undated",
+    "unsupported_snippet",
+    "contradicted",
+    "not_independent",
+    "unsafe_source_text",
+    "other_evidence_issue",
+}
+_LIVE_EVIDENCE_CONFLICT_LABELS = {
+    "sources_disagree",
+    "syndicated_not_independent",
+    "freshness_conflict",
+    "live_vs_private_evidence_conflict",
+    "live_vs_historical_conflict",
+    "other_source_conflict",
+}
+_CONTROL_CHARS_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
+
+def _clean_external_text(value: str, limit: int) -> str:
+    return _CONTROL_CHARS_RE.sub("", str(value)).strip()[:limit]
+
+
+class LiveEvidenceSource(BaseModel):
+    evidence_id: str
+    query_index: int = Field(ge=0, le=1)
+    title: str = ""
+    canonical_url: str
+    domain: str
+    snippet: str = ""
+    relevance_score: float = 0.0
+    fetched_at: str
+
+    @field_validator("title")
+    @classmethod
+    def sanitize_title(cls, value: str) -> str:
+        return _clean_external_text(value, 180)
+
+    @field_validator("snippet")
+    @classmethod
+    def sanitize_snippet(cls, value: str) -> str:
+        return _clean_external_text(value, 600)
+
+    @field_validator("canonical_url")
+    @classmethod
+    def validate_url(cls, value: str) -> str:
+        parsed = urlparse(value)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            raise ValueError("live evidence URL must use http/https with a hostname")
+        return value
+
+    @field_validator("domain")
+    @classmethod
+    def normalize_domain(cls, value: str) -> str:
+        domain = str(value).strip().casefold()
+        return domain[4:] if domain.startswith("www.") else domain
+
+    @field_validator("relevance_score")
+    @classmethod
+    def clamp_score(cls, value: float) -> float:
+        return max(0.0, min(1.0, float(value)))
+
+
+class LiveEvidenceContext(BaseModel):
+    status: LiveEvidenceStatus = "disabled"
+    query_count: int = Field(default=0, ge=0, le=2)
+    sources: list[LiveEvidenceSource] = Field(default_factory=list)
+    error_labels: list[str] = Field(default_factory=list)
+
+    @field_validator("error_labels")
+    @classmethod
+    def sanitize_error_labels(cls, values: list[str]) -> list[str]:
+        return [
+            value for value in dict.fromkeys(values)
+            if value in _LIVE_EVIDENCE_ERROR_LABELS
+        ]
+
+
+class LiveEvidenceRejection(BaseModel):
+    evidence_id: str
+    reason: str
+
+    @field_validator("reason")
+    @classmethod
+    def sanitize_reason(cls, value: str) -> str:
+        return value if value in _LIVE_EVIDENCE_REJECTION_REASONS else "other_evidence_issue"
+
+
+class LiveEvidenceAssessment(BaseModel):
+    accepted_evidence_ids: list[str] = Field(default_factory=list)
+    rejected_evidence: list[LiveEvidenceRejection] = Field(default_factory=list)
+    source_conflict_labels: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def sanitize_assessment(self) -> "LiveEvidenceAssessment":
+        self.accepted_evidence_ids = list(dict.fromkeys(self.accepted_evidence_ids))
+        accepted = set(self.accepted_evidence_ids)
+        seen_rejected: set[str] = set()
+        rejected: list[LiveEvidenceRejection] = []
+        for item in self.rejected_evidence:
+            if item.evidence_id in accepted or item.evidence_id in seen_rejected:
+                continue
+            seen_rejected.add(item.evidence_id)
+            rejected.append(item)
+        self.rejected_evidence = rejected
+        self.source_conflict_labels = list(
+            dict.fromkeys(
+                value if value in _LIVE_EVIDENCE_CONFLICT_LABELS else "other_source_conflict"
+                for value in self.source_conflict_labels
+            )
+        )
+        return self
+
+
+class LiveEvidenceSummary(BaseModel):
+    status: LiveEvidenceStatus = "disabled"
+    query_count: int = Field(default=0, ge=0, le=2)
+    source_count: int = Field(default=0, ge=0, le=10)
+    source_domains: list[str] = Field(default_factory=list)
+    accepted_evidence_ids: list[str] = Field(default_factory=list)
+    rejected_evidence_ids: list[str] = Field(default_factory=list)
+    error_labels: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def sanitize_summary(self) -> "LiveEvidenceSummary":
+        self.source_domains = list(
+            dict.fromkeys(
+                domain[4:] if domain.casefold().startswith("www.") else domain.casefold()
+                for domain in (str(value).strip() for value in self.source_domains)
+                if domain
+            )
+        )
+        self.accepted_evidence_ids = list(dict.fromkeys(self.accepted_evidence_ids))
+        accepted = set(self.accepted_evidence_ids)
+        self.rejected_evidence_ids = [
+            value for value in dict.fromkeys(self.rejected_evidence_ids) if value not in accepted
+        ]
+        self.error_labels = [
+            value for value in dict.fromkeys(self.error_labels)
+            if value in _LIVE_EVIDENCE_ERROR_LABELS
+        ]
+        return self
+
+
 class EvidenceAssessment(BaseModel):
     supported_claims: list[str] = Field(default_factory=list)
     weak_or_unsupported_claims: list[str] = Field(default_factory=list)
@@ -317,6 +470,7 @@ class EvidenceAssessment(BaseModel):
     framework_fact_confusions: list[str] = Field(default_factory=list)
     historical_context: HistoricalContextAssessment | None = None
     framework_assessment: FrameworkAssessment = Field(default_factory=FrameworkAssessment)
+    live_evidence: LiveEvidenceAssessment = Field(default_factory=LiveEvidenceAssessment)
     parse_error: bool = False
 
 
@@ -353,6 +507,7 @@ class CouncilOSResult(BaseModel):
     errors: list[str] = Field(default_factory=list)
     learning_context_summary: LearningContextSummary | None = None
     framework_selection_summary: FrameworkSelectionSummary | None = None
+    live_evidence_summary: LiveEvidenceSummary | None = None
 
     @model_validator(mode="after")
     def normalize_framework_retrieval_diagnostics(self) -> "CouncilOSResult":
