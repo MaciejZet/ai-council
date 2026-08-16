@@ -69,7 +69,15 @@ def _strip_url_query(match: re.Match[str]) -> str:
         return "[REDACTED_URL]" + trailing
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         return "[REDACTED_URL]" + trailing
-    safe = urlunsplit((parsed.scheme.lower(), parsed.netloc, parsed.path or "/", "", ""))
+    hostname = parsed.hostname.casefold()
+    netloc = f"[{hostname}]" if ":" in hostname else hostname
+    try:
+        port = parsed.port
+    except ValueError:
+        return "[REDACTED_URL]" + trailing
+    if port is not None:
+        netloc = f"{netloc}:{port}"
+    safe = urlunsplit((parsed.scheme.lower(), netloc, parsed.path or "/", "", ""))
     return safe + trailing
 
 

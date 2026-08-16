@@ -19,10 +19,15 @@ from src.council.council_os_models import (
     LiveEvidenceAssessment,
     LiveEvidenceContext,
     LiveEvidenceRejection,
+    LiveEvidenceSource,
     LiveEvidenceSummary,
     ProblemProfile,
 )
-from src.council.live_evidence import LiveEvidenceProvider, TavilyLiveEvidenceProvider
+from src.council.live_evidence import (
+    LiveEvidenceProvider,
+    TavilyLiveEvidenceProvider,
+    canonicalize_live_url,
+)
 from src.knowledge.retriever import query_knowledge_result
 from src.llm_providers import LLMProvider
 
@@ -151,8 +156,35 @@ class CouncilOS(_CoreCouncilOS):
             else []
         )
         try:
-            context = await self.live_evidence_provider.collect(query, profile, framework_ids)
-            return LiveEvidenceContext.model_validate(context)
+            raw_context = await self.live_evidence_provider.collect(query, profile, framework_ids)
+            context = LiveEvidenceContext.model_validate(raw_context)
+            normalized_sources: list[LiveEvidenceSource] = []
+            for source in context.sources[:10]:
+                try:
+                    canonical_url, domain = canonicalize_live_url(source.canonical_url)
+                except (TypeError, ValueError):
+                    continue
+                normalized_sources.append(
+                    LiveEvidenceSource(
+                        evidence_id=source.evidence_id,
+                        query_index=source.query_index,
+                        title=source.title,
+                        canonical_url=canonical_url,
+                        domain=domain,
+                        snippet=source.snippet,
+                        relevance_score=source.relevance_score,
+                        fetched_at=source.fetched_at,
+                    )
+                )
+            status = context.status
+            if status == "ok" and not normalized_sources:
+                status = "no_matches"
+            return LiveEvidenceContext(
+                status=status,
+                query_count=context.query_count,
+                sources=normalized_sources,
+                error_labels=list(context.error_labels),
+            )
         except Exception:
             return LiveEvidenceContext(
                 status="unavailable",
