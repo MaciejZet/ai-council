@@ -95,6 +95,7 @@ The sequence is fixed:
 problem profile and routing
 → per-expert private RAG
 → blind independent memos
+→ user-scoped Decision Memory learning (authenticated runs only)
 → peer rebuttals
 → Red Team
 → Evidence Judge
@@ -102,7 +103,7 @@ problem profile and routing
 → GO / NO-GO / TEST / DEFER
 ```
 
-Each domain expert gets its own knowledge filters and completes the first memo before seeing peer opinions. Claims can be labeled as supplied-evidence facts (`F`), assumptions (`A`), inferences (`I`), framework-derived claims (`FMW`), or judgment (`O`). If more than 80% of successful blind votes point in the same direction, Red Team is explicitly required to construct a credible contrarian case.
+Each domain expert gets its own knowledge filters and completes the first memo before seeing peer opinions or historical Decision Memory signals. Claims can be labeled as supplied-evidence facts (`F`), assumptions (`A`), inferences (`I`), framework-derived claims (`FMW`), or judgment (`O`). If more than 80% of successful blind votes point in the same direction, Red Team is explicitly required to construct a credible contrarian case.
 
 The Chairman runs last and returns a typed verdict with confidence, consensus, the main disagreement, minority report, assumptions, evidence gaps, conditions that would change the decision, and an optional experiment with a metric, threshold, timeline, and kill criteria.
 
@@ -110,13 +111,15 @@ When every role uses the same provider and model, Council OS still makes separat
 
 ### 🧠 Decision Memory
 
-Authenticated `council_os` streams can persist a sanitized decision record. Send the existing `X-User-Session` header and a successful capture adds `decision_id` to the `council_os_result` SSE event. Anonymous and invalid-session runs still work, but they are not stored.
+Authenticated `council_os` streams can persist a sanitized decision record. Send the existing `X-User-Session` header and a successful capture adds `decision_id` to the `council_os_result` SSE event. Anonymous and invalid-session runs still work, but they are not stored and do not receive historical learning context.
 
 Decision Memory records the business question, problem profile, routed role ids, blind and revised votes, confidence, knowledge status, Chairman verdict, assumptions, evidence-gap labels, and the next experiment. It does not store raw RAG passages, source inventories, Drive IDs, full expert memo prose, or full rebuttal prose.
 
 Outcomes are user-authored and can be revised as evidence matures. A record can hold an operational status (`success`, `failure`, `mixed`, or `inconclusive`), an optional hindsight `resolved_vote`, experiment result, postmortem, and notes.
 
-Calibration is computed only for decisions with a non-null `resolved_vote`. Domain experts are scored from their blind vote; the Chairman is scored from the final verdict. Reports expose sample size, hit rate, mean confidence, and a `brier_like_error`. Historical decisions are not fed back into future Council prompts in this version.
+Calibration is computed only for decisions with a non-null `resolved_vote`. Domain experts are scored from their blind vote; the Chairman is scored from the final verdict. Reports expose sample size, hit rate, mean confidence, and a `brier_like_error`.
+
+For authenticated runs, resolved history can inform later deliberations only after the blind round. The learning layer uses sanitized metadata, fixed sample gates (`0-4 = none`, `5-14 = weak`, `15+ = normal`), and at most 3 deterministic analog decisions. Evidence Judge decides which historical analogies and calibration signals may reach the Chairman. Current-case evidence has priority, and historical queries, postmortems, notes, memo prose, raw RAG text, source inventories, and book text are not injected into prompts.
 
 ### 📚 Intelligent Knowledge Base
 - **RAG (Retrieval-Augmented Generation)** - Context from your documents
@@ -187,6 +190,7 @@ All Decision Memory REST endpoints require `X-User-Session`.
 
 ## Documentation
 
+- **[docs/DECISION_MEMORY_V2.md](docs/DECISION_MEMORY_V2.md)** - Controlled historical learning, privacy gates, sample thresholds, and failure behavior
 - **[docs/PRIVATE_KNOWLEDGE.md](docs/PRIVATE_KNOWLEDGE.md)** - Private Google Drive → Pinecone workflow and public-repo boundary
 - **[QUICK_START.md](QUICK_START.md)** - 🚀 Start w 3 krokach (ZACZNIJ TU!)
 - **[NAPRAWIONE.md](NAPRAWIONE.md)** - ✅ Co zostało naprawione i jak używać
