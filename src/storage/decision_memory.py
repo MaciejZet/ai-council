@@ -35,12 +35,7 @@ def _aggregate_predictions(predictions: list[dict[str, Any]]) -> list[dict[str, 
         correctness = 1.0 if predicted_vote == resolved_vote else 0.0
         values = grouped.setdefault(
             expert_id,
-            {
-                "sample_size": 0,
-                "correct_count": 0,
-                "confidence_sum": 0.0,
-                "error_sum": 0.0,
-            },
+            {"sample_size": 0, "correct_count": 0, "confidence_sum": 0.0, "error_sum": 0.0},
         )
         values["sample_size"] += 1
         values["correct_count"] += int(correctness)
@@ -105,7 +100,8 @@ class DecisionMemoryStore:
                     what_would_change_decision_json TEXT NOT NULL,
                     next_experiment_json TEXT,
                     knowledge_status_json TEXT NOT NULL,
-                    orchestration_errors_json TEXT NOT NULL
+                    orchestration_errors_json TEXT NOT NULL,
+                    learning_context_json TEXT
                 );
 
                 CREATE TABLE IF NOT EXISTS decision_expert_votes (
@@ -142,6 +138,9 @@ class DecisionMemoryStore:
                     ON decision_outcomes(user_id, status);
                 """
             )
+            columns = {row["name"] for row in conn.execute("PRAGMA table_info(decisions)").fetchall()}
+            if "learning_context_json" not in columns:
+                conn.execute("ALTER TABLE decisions ADD COLUMN learning_context_json TEXT")
 
     def capture_decision(self, user_id: str, query: str, result: CouncilOSResult) -> str:
         decision_id = str(uuid.uuid4())
@@ -150,6 +149,11 @@ class DecisionMemoryStore:
         verdict = result.verdict
         next_experiment = (
             verdict.next_experiment.model_dump(mode="json") if verdict.next_experiment is not None else None
+        )
+        learning_summary = (
+            result.learning_context_summary.model_dump(mode="json")
+            if result.learning_context_summary is not None
+            else None
         )
         rebuttals = {rebuttal.expert_id: rebuttal for rebuttal in result.rebuttals}
 
@@ -177,6 +181,7 @@ class DecisionMemoryStore:
             _json_dump(next_experiment) if next_experiment is not None else None,
             _json_dump(result.knowledge_status_by_expert),
             _json_dump(result.errors),
+            _json_dump(learning_summary) if learning_summary is not None else None,
         )
 
         with self._lock, self._connect() as conn:
@@ -190,11 +195,11 @@ class DecisionMemoryStore:
                     key_disagreement, minority_report, assumptions_json,
                     evidence_gaps_json, what_would_change_decision_json,
                     next_experiment_json, knowledge_status_json,
-                    orchestration_errors_json
+                    orchestration_errors_json, learning_context_json
                 ) VALUES (
                     ?, ?, ?, ?, ?,
                     ?, ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                 )
                 """,
                 decision_values,
@@ -245,13 +250,10 @@ class DecisionMemoryStore:
             "assumptions": _json_load(row["assumptions_json"]),
             "evidence_gaps": _json_load(row["evidence_gaps_json"]),
             "what_would_change_decision": _json_load(row["what_would_change_decision_json"]),
-            "next_experiment": (
-                _json_load(row["next_experiment_json"])
-                if row["next_experiment_json"] is not None
-                else None
-            ),
+            "next_experiment": _json_load(row["next_experiment_json"]) if row["next_experiment_json"] is not None else None,
             "knowledge_status_by_expert": _json_load(row["knowledge_status_json"]),
             "orchestration_errors": _json_load(row["orchestration_errors_json"]),
+            "learning_context_summary": _json_load(row["learning_context_json"]) if row["learning_context_json"] is not None else None,
         }
 
     @staticmethod
@@ -280,13 +282,9 @@ class DecisionMemoryStore:
 
     def get_decision(self, user_id: str, decision_id: str) -> dict[str, Any] | None:
         with self._lock, self._connect() as conn:
-            row = conn.execute(
-                "SELECT * FROM decisions WHERE id = ? AND user_id = ?",
-                (decision_id, user_id),
-            ).fetchone()
+            row = conn.execute("SELECT * FROM decisions WHERE id = ? AND user_id = ?", (decision_id, user_id)).fetchone()
             if row is None:
                 return None
-
             votes = conn.execute(
                 """
                 SELECT expert_id, blind_vote, blind_confidence,
@@ -301,7 +299,6 @@ class DecisionMemoryStore:
                 "SELECT * FROM decision_outcomes WHERE decision_id = ? AND user_id = ?",
                 (decision_id, user_id),
             ).fetchone()
-
         record = self._decision_from_row(row)
         record["expert_votes"] = [self._vote_from_row(vote) for vote in votes]
         record["outcome"] = self._outcome_from_row(outcome)
@@ -328,8 +325,7 @@ class DecisionMemoryStore:
             clauses.append("o.status = ?")
             params.append(outcome_status)
         params.append(limit)
-
-        query = f"""
+        sql = f"""
             SELECT d.*, o.status AS outcome_status, o.resolved_vote AS outcome_resolved_vote,
                    o.updated_at AS outcome_updated_at
             FROM decisions AS d
@@ -339,36 +335,32 @@ class DecisionMemoryStore:
             ORDER BY d.created_at DESC
             LIMIT ?
         """
-
         with self._lock, self._connect() as conn:
-            rows = conn.execute(query, params).fetchall()
-
-        items: list[dict[str, Any]] = []
-        for row in rows:
-            items.append(
-                {
-                    "id": row["id"],
-                    "created_at": row["created_at"],
-                    "updated_at": row["updated_at"],
-                    "query": row["query"],
-                    "primary_domain": row["primary_domain"],
-                    "decision_kind": row["decision_kind"],
-                    "risk_level": row["risk_level"],
-                    "verdict": row["verdict"],
-                    "verdict_confidence": row["verdict_confidence"],
-                    "has_outcome": row["outcome_status"] is not None,
-                    "outcome": (
-                        {
-                            "status": row["outcome_status"],
-                            "resolved_vote": row["outcome_resolved_vote"],
-                            "updated_at": row["outcome_updated_at"],
-                        }
-                        if row["outcome_status"] is not None
-                        else None
-                    ),
-                }
-            )
-        return items
+            rows = conn.execute(sql, params).fetchall()
+        return [
+            {
+                "id": row["id"],
+                "created_at": row["created_at"],
+                "updated_at": row["updated_at"],
+                "query": row["query"],
+                "primary_domain": row["primary_domain"],
+                "decision_kind": row["decision_kind"],
+                "risk_level": row["risk_level"],
+                "verdict": row["verdict"],
+                "verdict_confidence": row["verdict_confidence"],
+                "has_outcome": row["outcome_status"] is not None,
+                "outcome": (
+                    {
+                        "status": row["outcome_status"],
+                        "resolved_vote": row["outcome_resolved_vote"],
+                        "updated_at": row["outcome_updated_at"],
+                    }
+                    if row["outcome_status"] is not None
+                    else None
+                ),
+            }
+            for row in rows
+        ]
 
     def upsert_outcome(
         self,
@@ -383,13 +375,9 @@ class DecisionMemoryStore:
     ) -> dict[str, Any] | None:
         now = _now_iso()
         with self._lock, self._connect() as conn:
-            owner = conn.execute(
-                "SELECT 1 FROM decisions WHERE id = ? AND user_id = ?",
-                (decision_id, user_id),
-            ).fetchone()
+            owner = conn.execute("SELECT 1 FROM decisions WHERE id = ? AND user_id = ?", (decision_id, user_id)).fetchone()
             if owner is None:
                 return None
-
             conn.execute(
                 """
                 INSERT INTO decision_outcomes (
@@ -405,40 +393,20 @@ class DecisionMemoryStore:
                     postmortem = excluded.postmortem,
                     notes = excluded.notes
                 """,
-                (
-                    decision_id,
-                    user_id,
-                    now,
-                    status,
-                    resolved_vote,
-                    experiment_result,
-                    postmortem,
-                    notes,
-                ),
+                (decision_id, user_id, now, status, resolved_vote, experiment_result, postmortem, notes),
             )
-            conn.execute(
-                "UPDATE decisions SET updated_at = ? WHERE id = ? AND user_id = ?",
-                (now, decision_id, user_id),
-            )
-            outcome = conn.execute(
-                "SELECT * FROM decision_outcomes WHERE decision_id = ? AND user_id = ?",
-                (decision_id, user_id),
-            ).fetchone()
-
+            conn.execute("UPDATE decisions SET updated_at = ? WHERE id = ? AND user_id = ?", (now, decision_id, user_id))
+            outcome = conn.execute("SELECT * FROM decision_outcomes WHERE decision_id = ? AND user_id = ?", (decision_id, user_id)).fetchone()
         return self._outcome_from_row(outcome)
 
     def calibration_report(self, user_id: str) -> dict[str, Any]:
         with self._lock, self._connect() as conn:
             decisions = conn.execute(
                 """
-                SELECT d.id, d.primary_domain, d.verdict, d.verdict_confidence,
-                       o.resolved_vote
+                SELECT d.id, d.primary_domain, d.verdict, d.verdict_confidence, o.resolved_vote
                 FROM decisions AS d
-                JOIN decision_outcomes AS o
-                  ON o.decision_id = d.id AND o.user_id = d.user_id
-                WHERE d.user_id = ?
-                  AND o.user_id = ?
-                  AND o.resolved_vote IS NOT NULL
+                JOIN decision_outcomes AS o ON o.decision_id = d.id AND o.user_id = d.user_id
+                WHERE d.user_id = ? AND o.user_id = ? AND o.resolved_vote IS NOT NULL
                 ORDER BY d.created_at, d.id
                 """,
                 (user_id, user_id),
@@ -449,19 +417,14 @@ class DecisionMemoryStore:
                        d.primary_domain, o.resolved_vote
                 FROM decision_expert_votes AS v
                 JOIN decisions AS d ON d.id = v.decision_id
-                JOIN decision_outcomes AS o
-                  ON o.decision_id = d.id AND o.user_id = d.user_id
-                WHERE d.user_id = ?
-                  AND o.user_id = ?
-                  AND o.resolved_vote IS NOT NULL
+                JOIN decision_outcomes AS o ON o.decision_id = d.id AND o.user_id = d.user_id
+                WHERE d.user_id = ? AND o.user_id = ? AND o.resolved_vote IS NOT NULL
                 ORDER BY d.created_at, d.id, v.expert_id
                 """,
                 (user_id, user_id),
             ).fetchall()
-
         if not decisions:
             return {"sample_size": 0, "experts": [], "domains": {}}
-
         predictions: list[dict[str, Any]] = [
             {
                 "expert_id": row["expert_id"],
@@ -482,16 +445,10 @@ class DecisionMemoryStore:
             }
             for row in decisions
         )
-
         domains: dict[str, list[dict[str, Any]]] = {}
         for domain in sorted({str(row["primary_domain"]) for row in decisions}):
-            domain_predictions = [
-                prediction
-                for prediction in predictions
-                if prediction["primary_domain"] == domain
-            ]
+            domain_predictions = [p for p in predictions if p["primary_domain"] == domain]
             domains[domain] = _aggregate_predictions(domain_predictions)
-
         return {
             "sample_size": len(decisions),
             "experts": _aggregate_predictions(predictions),

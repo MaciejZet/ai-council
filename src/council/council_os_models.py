@@ -10,6 +10,8 @@ from pydantic import BaseModel, Field
 KnowledgeStatus = Literal["ok", "no_matches", "disabled", "unavailable"]
 Reversibility = Literal["reversible", "hard_to_reverse"]
 RiskLevel = Literal["low", "medium", "high"]
+SampleStrength = Literal["none", "weak", "normal"]
+LearningStatus = Literal["ok", "insufficient_history", "disabled", "unavailable"]
 
 
 class DecisionVote(StrEnum):
@@ -71,6 +73,67 @@ class RedTeamReport(BaseModel):
     parse_error: bool = False
 
 
+class ExpertCalibrationSignal(BaseModel):
+    expert_id: str
+    primary_domain: str
+    sample_size: int = Field(ge=0)
+    sample_strength: SampleStrength = "none"
+    hit_rate: float = Field(ge=0.0, le=1.0)
+    mean_confidence: float = Field(ge=0.0, le=1.0)
+    brier_like_error: float = Field(ge=0.0)
+    confidence_bias: float
+    reliability_rank: int | None = None
+    flags: list[str] = Field(default_factory=list)
+
+
+class AnalogDecision(BaseModel):
+    decision_id: str
+    primary_domain: str
+    decision_kind: str
+    reversibility: Reversibility
+    risk_level: RiskLevel
+    verdict: DecisionVote
+    verdict_confidence: float = Field(ge=0.0, le=1.0)
+    resolved_vote: DecisionVote
+    outcome_status: str
+    similarity_score: int = Field(ge=0)
+    matching_dimensions: list[str] = Field(default_factory=list)
+
+
+class HistoricalAnalogyRejection(BaseModel):
+    decision_id: str
+    reason: str
+
+
+class HistoricalContextAssessment(BaseModel):
+    accepted_analogy_ids: list[str] = Field(default_factory=list)
+    rejected_analogies: list[HistoricalAnalogyRejection] = Field(default_factory=list)
+    usable_calibration_expert_ids: list[str] = Field(default_factory=list)
+    too_weak_calibration_expert_ids: list[str] = Field(default_factory=list)
+    current_evidence_conflicts: list[str] = Field(default_factory=list)
+
+
+class LearningContext(BaseModel):
+    status: LearningStatus = "disabled"
+    expert_signals: list[ExpertCalibrationSignal] = Field(default_factory=list)
+    analog_decisions: list[AnalogDecision] = Field(default_factory=list)
+    bias_alerts: list[str] = Field(default_factory=list)
+    protected_minority_expert_ids: list[str] = Field(default_factory=list)
+    scored_history_count: int = Field(default=0, ge=0)
+    error_labels: list[str] = Field(default_factory=list)
+
+
+class LearningContextSummary(BaseModel):
+    status: LearningStatus = "disabled"
+    scored_history_count: int = Field(default=0, ge=0)
+    analogy_count: int = Field(default=0, ge=0)
+    active_sample_strengths: dict[str, SampleStrength] = Field(default_factory=dict)
+    bias_alerts: list[str] = Field(default_factory=list)
+    protected_minority_expert_ids: list[str] = Field(default_factory=list)
+    rejected_analogies: list[HistoricalAnalogyRejection] = Field(default_factory=list)
+    influenced_final_stage: bool = False
+
+
 class EvidenceAssessment(BaseModel):
     supported_claims: list[str] = Field(default_factory=list)
     weak_or_unsupported_claims: list[str] = Field(default_factory=list)
@@ -78,6 +141,7 @@ class EvidenceAssessment(BaseModel):
     evidence_gaps: list[str] = Field(default_factory=list)
     knowledge_status_by_expert: dict[str, KnowledgeStatus] = Field(default_factory=dict)
     framework_fact_confusions: list[str] = Field(default_factory=list)
+    historical_context: HistoricalContextAssessment | None = None
     parse_error: bool = False
 
 
@@ -112,6 +176,7 @@ class CouncilOSResult(BaseModel):
     verdict: CouncilVerdict
     knowledge_status_by_expert: dict[str, KnowledgeStatus] = Field(default_factory=dict)
     errors: list[str] = Field(default_factory=list)
+    learning_context_summary: LearningContextSummary | None = None
 
 
 def extract_json_object(text: str) -> dict:
