@@ -114,7 +114,9 @@ def test_anonymous_request_masks_any_outer_learning_context(tmp_path):
     install_decision_memory(app, store=store, validate_session=lambda token: None)
     client = TestClient(app)
 
-    outer_provider = lambda *_args: None
+    def outer_provider(*_args):
+        return None
+
     token = bind_learning_context_provider(outer_provider)
     try:
         response = client.get(
