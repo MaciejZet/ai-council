@@ -4,7 +4,15 @@ import pytest
 
 from src.council.council_os import CouncilOS
 from src.council.expert_registry import EXPERT_REGISTRY
-from src.council.council_os_models import AnalogDecision, ExpertCalibrationSignal, LearningContext
+from src.council.council_os_models import (
+    AnalogDecision,
+    EvidenceAssessment,
+    ExpertCalibrationSignal,
+    HistoricalContextAssessment,
+    LearningContext,
+    ProblemProfile,
+    RedTeamReport,
+)
 from src.knowledge.private_models import KnowledgeRetrievalResult
 from src.llm_providers import LLMResponse
 
@@ -32,9 +40,7 @@ class RecordingLLM:
     async def generate(self, system_prompt, user_prompt, temperature=0.7, max_tokens=None):
         stage = self._stage(system_prompt)
         expert_id = self._expert_id(system_prompt)
-        self.calls.append(
-            {"stage": stage, "expert_id": expert_id, "system": system_prompt, "user": user_prompt}
-        )
+        self.calls.append({"stage": stage, "expert_id": expert_id, "system": system_prompt, "user": user_prompt})
         if stage == "BLIND":
             vote = "NO-GO" if expert_id == "growth" else "GO"
             payload = {
@@ -75,9 +81,7 @@ class RecordingLLM:
                 "framework_fact_confusions": [],
                 "historical_context": {
                     "accepted_analogy_ids": [ACCEPTED_ID],
-                    "rejected_analogies": [
-                        {"decision_id": REJECTED_ID, "reason": "current_evidence_conflict"}
-                    ],
+                    "rejected_analogies": [{"decision_id": REJECTED_ID, "reason": "current_evidence_conflict"}],
                     "usable_calibration_expert_ids": ["growth"],
                     "too_weak_calibration_expert_ids": ["sales"],
                     "current_evidence_conflicts": [REJECTED_ID],
@@ -179,18 +183,13 @@ async def test_learning_is_loaded_only_after_all_blind_calls_and_never_leaks_int
         return learning_context()
 
     council = CouncilOS(llm, retriever=retriever, learning_context_provider=provider)
-    result = await council.deliberate(
-        "Should growth and sales change pricing with a reversible experiment?"
-    )
+    result = await council.deliberate("Should growth and sales change pricing with a reversible experiment?")
 
     assert len(provider_calls) == 1
     assert len(provider_calls[0]) >= 4
     assert set(provider_calls[0]) == {"BLIND"}
     blind_calls = [call for call in llm.calls if call["stage"] == "BLIND"]
-    assert all(
-        ACCEPTED_ID not in call["user"] and REJECTED_ID not in call["user"]
-        for call in blind_calls
-    )
+    assert all(ACCEPTED_ID not in call["user"] and REJECTED_ID not in call["user"] for call in blind_calls)
     assert result.learning_context_summary is not None
     assert result.learning_context_summary.status == "ok"
 
@@ -200,18 +199,16 @@ async def test_stage_exposure_and_evidence_judge_filtering_keep_rejected_analogy
     llm = RecordingLLM()
     council = CouncilOS(llm, retriever=retriever, learning_context_provider=lambda *_: learning_context())
 
-    result = await council.deliberate(
-        "Should growth and sales change pricing with a reversible experiment?"
-    )
+    result = await council.deliberate("Should growth and sales change pricing with a reversible experiment?")
 
-    rebuttal_users = [call["user"] for call in llm.calls if call["stage"] == "REBUTTAL"]
+    rebuttal_users = [c["user"] for c in llm.calls if c["stage"] == "REBUTTAL"]
     assert any(ACCEPTED_ID in text for text in rebuttal_users)
-    red_user = next(call["user"] for call in llm.calls if call["stage"] == "RED_TEAM")
+    red_user = next(c["user"] for c in llm.calls if c["stage"] == "RED_TEAM")
     assert "overconfidence" in red_user
     assert "growth" in red_user
-    evidence_user = next(call["user"] for call in llm.calls if call["stage"] == "EVIDENCE_JUDGE")
+    evidence_user = next(c["user"] for c in llm.calls if c["stage"] == "EVIDENCE_JUDGE")
     assert ACCEPTED_ID in evidence_user and REJECTED_ID in evidence_user
-    chairman = next(call for call in llm.calls if call["stage"] == "CHAIRMAN")
+    chairman = next(c for c in llm.calls if c["stage"] == "CHAIRMAN")
     assert ACCEPTED_ID in chairman["user"]
     assert REJECTED_ID not in chairman["user"]
     assert "overconfidence" not in chairman["user"]
@@ -231,9 +228,7 @@ async def test_learning_provider_failure_is_sanitized_and_does_not_break_deliber
         raise RuntimeError("PRIVATE_STORAGE_EXCEPTION_SENTINEL")
 
     council = CouncilOS(llm, retriever=retriever, learning_context_provider=broken_provider)
-    result = await council.deliberate(
-        "Should growth and sales change pricing with a reversible experiment?"
-    )
+    result = await council.deliberate("Should growth and sales change pricing with a reversible experiment?")
 
     assert result.verdict.verdict.value == "TEST"
     assert "learning_context_unavailable" in result.errors
@@ -252,3 +247,38 @@ def test_blind_prompt_contains_a_valid_json_schema_example():
     assert parsed["assumptions"] == ["string"]
     assert parsed["risks"] == ["string"]
     assert parsed["what_changes_my_mind"] == ["string"]
+
+
+@pytest.mark.asyncio
+async def test_evidence_judge_can_remove_protected_minority_from_chairman_influence():
+    llm = RecordingLLM()
+    council = CouncilOS(llm, retriever=retriever)
+    learning = learning_context()
+    evidence = EvidenceAssessment(
+        historical_context=HistoricalContextAssessment(
+            accepted_analogy_ids=[],
+            usable_calibration_expert_ids=[],
+            too_weak_calibration_expert_ids=["growth", "sales"],
+        )
+    )
+
+    approved = council._approved_learning_payload(learning, evidence)
+    summary = council._learning_summary(learning, evidence)
+    assert approved["protected_minority_expert_ids"] == []
+    assert summary.protected_minority_expert_ids == []
+    assert summary.influenced_final_stage is False
+
+    await council._run_chairman(
+        "current question",
+        ProblemProfile(primary_domain="growth"),
+        [],
+        [],
+        [],
+        RedTeamReport(),
+        evidence,
+        [],
+        learning,
+    )
+    chairman = next(call for call in llm.calls if call["stage"] == "CHAIRMAN")
+    assert "No protected minority obligation is active." in chairman["system"]
+    assert "growth" not in chairman["system"].split("Protected minority:")[-1]
