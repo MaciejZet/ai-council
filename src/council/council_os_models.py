@@ -134,6 +134,41 @@ class LearningContextSummary(BaseModel):
     influenced_final_stage: bool = False
 
 
+class FrameworkMatch(BaseModel):
+    framework_id: str
+    score: int
+    reason_labels: list[str] = Field(default_factory=list)
+    assigned_expert_ids: list[str] = Field(default_factory=list)
+
+
+class FrameworkSelection(BaseModel):
+    policy_version: str
+    matches: list[FrameworkMatch] = Field(default_factory=list)
+    by_expert: dict[str, list[str]] = Field(default_factory=dict)
+
+
+class FrameworkFactMisclassification(BaseModel):
+    claim_ref: str
+    framework_id: str | None = None
+    reason: str
+
+
+class FrameworkAssessment(BaseModel):
+    misclassified_fact_claims: list[FrameworkFactMisclassification] = Field(default_factory=list)
+    framework_overreach_labels: list[str] = Field(default_factory=list)
+    rejected_framework_ids: list[str] = Field(default_factory=list)
+
+
+class FrameworkSelectionSummary(BaseModel):
+    policy_version: str
+    selected_framework_ids: list[str] = Field(default_factory=list)
+    by_expert: dict[str, list[str]] = Field(default_factory=dict)
+    reason_labels_by_framework: dict[str, list[str]] = Field(default_factory=dict)
+    retrieval_status_by_expert: dict[str, str] = Field(default_factory=dict)
+    rejected_framework_ids: list[str] = Field(default_factory=list)
+    selector_error_labels: list[str] = Field(default_factory=list)
+
+
 class EvidenceAssessment(BaseModel):
     supported_claims: list[str] = Field(default_factory=list)
     weak_or_unsupported_claims: list[str] = Field(default_factory=list)
@@ -142,6 +177,7 @@ class EvidenceAssessment(BaseModel):
     knowledge_status_by_expert: dict[str, KnowledgeStatus] = Field(default_factory=dict)
     framework_fact_confusions: list[str] = Field(default_factory=list)
     historical_context: HistoricalContextAssessment | None = None
+    framework_assessment: FrameworkAssessment = Field(default_factory=FrameworkAssessment)
     parse_error: bool = False
 
 
@@ -177,6 +213,7 @@ class CouncilOSResult(BaseModel):
     knowledge_status_by_expert: dict[str, KnowledgeStatus] = Field(default_factory=dict)
     errors: list[str] = Field(default_factory=list)
     learning_context_summary: LearningContextSummary | None = None
+    framework_selection_summary: FrameworkSelectionSummary | None = None
 
 
 def extract_json_object(text: str) -> dict:
